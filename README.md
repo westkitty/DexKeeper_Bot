@@ -69,6 +69,16 @@ You need to tell Telegram "I am making a bot" and get a key to control it.
 
 ## 💻 Phase 2: Installation Guide
 
+### Option A: Download Pre-Built Release (Easiest)
+
+**[📥 Download the latest release (.zip)](https://github.com/westkitty/DexKeeper_Bot/releases/latest)**
+
+1. Download `DexKeeper_Bot_v0.1.0.zip` from the Releases page.
+2. Extract the ZIP file.
+3. Continue to "Configure the Bot" below.
+
+### Option B: Clone from Source
+
 We use **Docker** to make this easy. If you don't know what Docker is, think of it as a "program player". We give you the cartridge (this code), and Docker plays it exactly the same on every computer.
 
 ### Step 1: Install Docker
@@ -82,14 +92,20 @@ We use **Docker** to make this easy. If you don't know what Docker is, think of 
 
 ### Step 3: Configure the Bot
 1.  Open the `DexKeeper_Bot` folder.
-2.  Create a new text file named `.env` (strictly `.env` nothing else).
-    *   *Tip: On Windows, you might need to name it `.env.txt` first, then remove the `.txt` extension.*
+2.  Copy `.env.example` to `.env`:
+    ```bash
+    cp .env.example .env
+    ```
 3.  Open `.env` with Notepad or TextEdit.
-4.  Paste your token inside like this:
+4.  Replace the placeholder with your actual bot token:
     ```
     BOT_TOKEN=123456789:ABCdefGHIjklMNOpqrsTUVwxyz
     ```
-5.  Save and close.
+5.  (Optional) Add your Telegram User ID to become admin:
+    ```
+    ADMIN_ID=123456789
+    ```
+6.  Save and close.
 
 ### Step 4: Run It
 1.  **Open Terminal** (Mac/Linux) or **PowerShell** (Windows).

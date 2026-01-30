@@ -42,6 +42,7 @@ Thumbs.db
 # Secrets & env files
 .env
 .env.*
+!.env.example
 secrets.json
 *.p12
 *.pem
