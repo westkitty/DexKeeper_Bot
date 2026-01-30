@@ -27,36 +27,40 @@ ENV/
 env/
 .venv
 
-# IDE
-.vscode/
+# IDEs
 .idea/
+.vscode/
+*.iml
 *.swp
 *.swo
 *~
 
-# Environment Variables
-.env
-.env.local
-.env.*.local
+# OS junk
+.DS_Store
+Thumbs.db
 
-# Database
+# Secrets & env files
+.env
+.env.*
+secrets.json
+*.p12
+*.pem
+*.key
+*.cer
+
+# Database & Runtime
 *.db
 *.db-shm
 *.db-wal
 *.sqlite
 *.sqlite3
 data/
-
-# Logs
+*.pickle
+bot_persistence.pickle
 *.log
-
-# OS
-.DS_Store
-Thumbs.db
 
 # Docker
 docker-compose.override.yml
 
-# Telegram Bot Persistence
-*.pickle
-bot_persistence.pickle
+# Release
+DexKeeper_Bot_*.zip
