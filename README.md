@@ -101,6 +101,21 @@ We use **Docker** to make this easy. If you don't know what Docker is, think of 
     ```
 4.  Wait for `Started` or `Running`. Your bot is now online!
 
+### Alternative: Running Manually (Without Docker)
+
+If you prefer to run Python directly:
+
+1.  **Install Python 3.11+**.
+2.  **Install Requirements**:
+    ```bash
+    pip install -r requirements.txt
+    ```
+3.  **Configure**: Create `.env` as shown above.
+4.  **Run**:
+    ```bash
+    python3 Sources/DexKeeper_Bot/dexkeeper_bot.py
+    ```
+
 ---
 
 ## 🛸 Phase 3: Setup on Telegram
