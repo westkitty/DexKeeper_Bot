@@ -24,16 +24,16 @@ DexKeeper is a production-ready Telegram bot designed to keep communities safe, 
 
 ## Key Features
 
-- 🛡️ **Smart Join Verification** – CAPTCHA-based gating with customizable welcome messages
-- 🚨 **Real-Time Flood Detection** – Automatic rate limiting and temporary muting
-- 🎥 **Zoom Link Beautification** – Transforms raw Zoom URLs into styled cards (4 themes available)
-- 👮 **Hierarchical Admin Dashboard** – Multi-tier access control with role-based permissions
-- 📊 **Poll Creation & Broadcasting** – Engage your community with scheduled announcements
-- 🔒 **Lockdown Mode** – Instantly pause new member requests during emergencies
-- 🤬 **Word Filtering** – Auto-delete messages containing blacklisted terms
-- 💾 **SQLite Persistence** – WAL mode for concurrent reads and zero data loss
-- 📥 **CSV Exports** – Download complete user databases for analytics
-- 🐳 **Docker-Ready** – One-command deployment with health checks
+- **Smart Join Verification** – CAPTCHA-based gating with customizable welcome messages
+- **Real-Time Flood Detection** – Automatic rate limiting and temporary muting
+- **Zoom Link Beautification** – Transforms raw Zoom URLs into styled cards (4 themes available)
+- **Hierarchical Admin Dashboard** – Multi-tier access control with role-based permissions
+- **Poll Creation & Broadcasting** – Engage your community with scheduled announcements
+- **Lockdown Mode** – Instantly pause new member requests during emergencies
+- **Word Filtering** – Auto-delete messages containing blacklisted terms
+- **SQLite Persistence** – WAL mode for concurrent reads and zero data loss
+- **CSV Exports** – Download complete user databases for analytics
+- **Docker-Ready** – One-command deployment with health checks
 
 ## Installation
 
