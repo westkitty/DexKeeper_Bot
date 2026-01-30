@@ -13,13 +13,13 @@ RUN groupadd -g 1000 dexkeeper && \
 WORKDIR /app
 
 # Install dependencies first (caching)
-COPY requirements.txt .
+COPY Sources/DexKeeper_Bot/requirements.txt .
 RUN pip install --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
 # Copy bot code (and healthcheck)
-COPY dexkeeper_bot.py .
-COPY healthcheck.py .
+COPY Sources/DexKeeper_Bot/dexkeeper_bot.py .
+COPY Sources/DexKeeper_Bot/healthcheck.py .
 
 # Permissions
 RUN chown -R dexkeeper:dexkeeper /app
