@@ -36,7 +36,7 @@ from telegram import (
 )
 from telegram.ext import (
     ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler,
-    CallbackQueryHandler, ChatJoinRequestHandler, ChatMemberHandler,
+    CallbackQueryHandler, ChatJoinRequestHandler,
     ConversationHandler, filters, Defaults, PicklePersistence, ApplicationHandlerStop, TypeHandler
 )
 from telegram.error import Forbidden, TelegramError
@@ -91,6 +91,17 @@ RESTART_JOB = None
 RELEASES_URL = "https://github.com/westkitty/DexKeeper_Bot/releases/latest"
 RELEASES_API = "https://api.github.com/repos/westkitty/DexKeeper_Bot/releases/latest"
 
+def _parse_admin_id(value: Optional[str]) -> int:
+    if value is None:
+        return 0
+    text = str(value).strip()
+    if not text:
+        return 0
+    if text.isdigit():
+        return int(text)
+    logger.warning("Invalid ADMIN_ID value; expected numeric Telegram user ID.")
+    return 0
+
 def _resource_path(rel_path: str) -> Path:
     base = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[2]))
     return base / rel_path
@@ -134,7 +145,7 @@ def _request_stop():
             return
         except Exception:
             pass
-    os._exit(0)
+    logger.warning("Graceful stop failed; no application instance to stop.")
 
 def _restart():
     try:
@@ -235,7 +246,12 @@ def _set_autostart(enabled: bool):
         if enabled:
             autostart_path.parent.mkdir(parents=True, exist_ok=True)
             cmd = " ".join([f"\"{c}\"" if " " in c else c for c in _get_launch_command()])
-            desktop = f\"\"\"[Desktop Entry]\nType=Application\nName=DexKeeper\nExec={cmd}\nX-GNOME-Autostart-enabled=true\n\"\"\"
+            desktop = f"""[Desktop Entry]
+Type=Application
+Name=DexKeeper
+Exec={cmd}
+X-GNOME-Autostart-enabled=true
+"""
             autostart_path.write_text(desktop, encoding="utf-8")
         else:
             autostart_path.unlink(missing_ok=True)
@@ -428,15 +444,19 @@ def start_tray(app):
         pystray.MenuItem("Stop DexKeeper", lambda icon, item: _request_stop())
     )
     TRAY_ICON = pystray.Icon("DexKeeper", image, "DexKeeper", menu)
-
-    def run_icon():
-        try:
-            TRAY_ICON.run()
-        except Exception as e:
-            logger.warning("Tray icon failed: %s", e)
-
-    t = threading.Thread(target=run_icon, daemon=True)
-    t.start()
+    try:
+        if hasattr(TRAY_ICON, "run_detached"):
+            TRAY_ICON.run_detached()
+        else:
+            def run_icon():
+                try:
+                    TRAY_ICON.run()
+                except Exception as e:
+                    logger.warning("Tray icon failed: %s", e)
+            t = threading.Thread(target=run_icon, daemon=True)
+            t.start()
+    except Exception as e:
+        logger.warning("Tray icon failed: %s", e)
 
 def _load_env():
     load_dotenv(dotenv_path=ENV_PATH, override=False)
@@ -444,7 +464,7 @@ def _load_env():
 
 _load_env()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-ADMIN_ID = int(os.getenv("ADMIN_ID", "0")) # Fallback to 0 if missing
+ADMIN_ID = _parse_admin_id(os.getenv("ADMIN_ID"))
 DB_PATH = os.getenv("DB_PATH") or str(DATA_DIR / "dexkeeper.db")
 
 # Rate Limiting & Anti-Spam Cache
@@ -554,8 +574,10 @@ async def paused_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def _write_env(token: str, admin_id: str = "") -> None:
     lines = [f"BOT_TOKEN={token}"]
-    if admin_id:
+    if admin_id and admin_id.isdigit():
         lines.append(f"ADMIN_ID={admin_id}")
+    elif admin_id:
+        logger.warning("ADMIN_ID must be numeric; skipping invalid value.")
     ENV_PATH.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 def _prompt_console() -> Tuple[Optional[str], Optional[str]]:
@@ -647,7 +669,7 @@ def ensure_config() -> bool:
         os.environ["ADMIN_ID"] = admin
 
     BOT_TOKEN = os.getenv("BOT_TOKEN")
-    ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
+    ADMIN_ID = _parse_admin_id(os.getenv("ADMIN_ID"))
     DB_PATH = os.getenv("DB_PATH") or str(DATA_DIR / "dexkeeper.db")
     return True
 
@@ -656,7 +678,10 @@ def ensure_config() -> bool:
 def admin_only(func):
     @functools.wraps(func)
     async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs):
-        user_id = update.effective_user.id
+        user = update.effective_user
+        if not user:
+            return
+        user_id = user.id
         conn = context.application.db_conn
         
         # Check Env Admin
@@ -669,7 +694,9 @@ def admin_only(func):
             return await func(update, context, *args, **kwargs)
             
         # Fail
-        await update.message.reply_text("⛔ Access Denied: Admin only.")
+        msg = update.effective_message
+        if msg:
+            await msg.reply_text("⛔ Access Denied: Admin only.")
         return
     return wrapper
 
@@ -1129,6 +1156,8 @@ async def global_middleware(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def on_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Module B: Public Verify"""
+    if not update.message or not update.message.new_chat_members:
+        return
     for member in update.message.new_chat_members:
         if member.id == context.bot.id: continue
         conn = context.application.db_conn
@@ -1226,7 +1255,7 @@ def main():
     app.add_handler(admin_handler)
     
     # Module B: Join Logic
-    app.add_handler(ChatMemberHandler(on_new_member, ChatMemberHandler.CHAT_MEMBER))
+    app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, on_new_member))
     app.add_handler(CallbackQueryHandler(verify_callback, pattern=r"^verify:"))
     
     # Module A: Global Middleware (Flood/Filter/Zoom)
