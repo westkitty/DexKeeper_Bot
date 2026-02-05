@@ -31,7 +31,10 @@ if ($exeCandidates.Count -eq 0) {
 }
 
 $exePath = $exeCandidates[0].FullName
-Copy-Item $exePath (Join-Path $dist "DexKeeper.exe") -Force
+$targetExe = Join-Path $dist "DexKeeper.exe"
+if ($exePath -ne $targetExe) {
+  Copy-Item $exePath $targetExe -Force
+}
 
 Write-Host "Build output: $dist\DexKeeper.exe"
 
