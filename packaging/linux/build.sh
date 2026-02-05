@@ -21,7 +21,15 @@ BUILD="$ROOT/build/linux"
 "$PYINSTALLER" "$SPEC" --noconfirm --clean --distpath "$DIST" --workpath "$BUILD"
 
 APPDIR="$DIST/DexKeeper.AppDir"
-BIN_SRC="$DIST/DexKeeper/DexKeeper"
+BIN_SRC=""
+if [ -f "$DIST/DexKeeper" ]; then
+  BIN_SRC="$DIST/DexKeeper"
+elif [ -f "$DIST/DexKeeper/DexKeeper" ]; then
+  BIN_SRC="$DIST/DexKeeper/DexKeeper"
+else
+  echo "DexKeeper binary not found in dist. Expected $DIST/DexKeeper or $DIST/DexKeeper/DexKeeper"
+  exit 1
+fi
 
 mkdir -p "$APPDIR/usr/bin"
 mkdir -p "$APPDIR/usr/share/applications"
