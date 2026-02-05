@@ -36,7 +36,12 @@ Copy-Item $exePath (Join-Path $dist "DexKeeper.exe") -Force
 Write-Host "Build output: $dist\DexKeeper.exe"
 
 if (Get-Command iscc.exe -ErrorAction SilentlyContinue) {
-  & iscc.exe /DMyAppExeSource="$exePath" (Join-Path $PSScriptRoot "DexKeeper.iss")
+  $issPath = Join-Path $PSScriptRoot "DexKeeper.iss"
+  $tempIss = Join-Path $env:TEMP "DexKeeper.generated.iss"
+  $defineLine = "#define MyAppExeSource `"$exePath`"`r`n"
+  $includeLine = "#include `"$issPath`"`r`n"
+  Set-Content -Path $tempIss -Value ($defineLine + $includeLine) -Encoding ASCII
+  & iscc.exe $tempIss
   Write-Host "Installer output: $dist\DexKeeper-Setup.exe"
 } else {
   Write-Host "Inno Setup (iscc.exe) not found; skipping installer packaging."
