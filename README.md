@@ -81,18 +81,18 @@ You need to tell Telegram "I am making a bot" and get a key to control it.
 
 If you're on Windows, you can install DexKeeper with a one‑click unsigned installer (SmartScreen will warn because it is unsigned).
 
-1. Go to **Releases** and download `DexKeeper-Setup.exe`.
+1. Go to **[Releases](https://github.com/westkitty/DexKeeper_Bot/releases/latest)** and download **[DexKeeper-Setup.exe](https://github.com/westkitty/DexKeeper_Bot/releases/latest/download/DexKeeper-Setup.exe)**.
 2. Run the installer and follow the minimal prompts.
 3. On first run, a small window will ask for your `BOT_TOKEN` and optional `ADMIN_ID`.
 4. DexKeeper will store its config and data in `%APPDATA%\DexKeeper`.
 
 Notes:
-- If you want the portable build instead, download `DexKeeper.exe` from the release assets.
+- If you want the portable build instead, download **[DexKeeper.exe](https://github.com/westkitty/DexKeeper_Bot/releases/latest/download/DexKeeper.exe)**.
 - To auto‑build Windows releases from Git tags, create a tag like `v0.1.1` and push it. GitHub Actions will build and attach the installer.
 
 ### Option A3: macOS One‑Click Installer (Unsigned)
 
-1. Go to **Releases** and download `DexKeeper.dmg`.
+1. Go to **[Releases](https://github.com/westkitty/DexKeeper_Bot/releases/latest)** and download **[DexKeeper.dmg](https://github.com/westkitty/DexKeeper_Bot/releases/latest/download/DexKeeper.dmg)**.
 2. Open the DMG and drag `DexKeeper.app` into Applications.
 3. On first run, a small window will ask for your `BOT_TOKEN` and optional `ADMIN_ID`.
 4. DexKeeper will store its config and data in `~/Library/Application Support/DexKeeper`.
@@ -103,7 +103,7 @@ Notes:
 
 ### Option A4: Linux One‑Click AppImage (Unsigned)
 
-1. Go to **Releases** and download `DexKeeper.AppImage`.
+1. Go to **[Releases](https://github.com/westkitty/DexKeeper_Bot/releases/latest)** and download **[DexKeeper.AppImage](https://github.com/westkitty/DexKeeper_Bot/releases/latest/download/DexKeeper.AppImage)**.
 2. Make it executable and run:
    ```bash
    chmod +x DexKeeper.AppImage
