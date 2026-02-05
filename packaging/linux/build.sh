@@ -45,6 +45,12 @@ chmod +x "$APPDIR/AppRun"
 cp "$ROOT/packaging/linux/DexKeeper.desktop" "$APPDIR/DexKeeper.desktop"
 cp "$ROOT/assets/DexKeeper_Bot_icon_256.png" "$APPDIR/DexKeeper.png"
 
+if [ ! -f "$APPDIR/DexKeeper.desktop" ]; then
+  echo "Desktop file missing at $APPDIR/DexKeeper.desktop"
+  ls -la "$APPDIR" || true
+  exit 1
+fi
+
 APPIMAGETOOL="${APPIMAGETOOL:-}" 
 if [ -z "$APPIMAGETOOL" ]; then
   APPIMAGETOOL="$ROOT/build/appimagetool.AppImage"

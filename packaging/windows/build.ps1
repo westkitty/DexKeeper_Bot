@@ -21,21 +21,22 @@ $build = Join-Path $root "build\windows"
 
 & $pyinstaller $spec --noconfirm --clean --distpath $dist --workpath $build
 
-$exeCandidates = Get-ChildItem -Path $dist -Filter "DexKeeper.exe" -Recurse -ErrorAction SilentlyContinue
+$exeCandidates = Get-ChildItem -Path $dist -Recurse -File -ErrorAction SilentlyContinue |
+  Where-Object { $_.Name -ieq "DexKeeper.exe" -or $_.Name -ieq "DexKeeper" -or $_.Name -like "DexKeeper*.exe" }
+
 if ($exeCandidates.Count -eq 0) {
-  $exeCandidates = Get-ChildItem -Path $dist -Filter "DexKeeper" -Recurse -File -ErrorAction SilentlyContinue
+  Write-Host "No DexKeeper binary found under $dist"
+  Get-ChildItem -Path $dist -Recurse | Select-Object FullName | Write-Host
+  exit 1
 }
-if ($exeCandidates.Count -eq 0) {
-  $exeCandidates = Get-ChildItem -Path $dist -Filter "DexKeeper*.exe" -Recurse -ErrorAction SilentlyContinue
-}
-if ($exeCandidates.Count -ge 1) {
-  Copy-Item $exeCandidates[0].FullName (Join-Path $dist "DexKeeper.exe") -Force
-}
+
+$exePath = $exeCandidates[0].FullName
+Copy-Item $exePath (Join-Path $dist "DexKeeper.exe") -Force
 
 Write-Host "Build output: $dist\DexKeeper.exe"
 
 if (Get-Command iscc.exe -ErrorAction SilentlyContinue) {
-  & iscc.exe (Join-Path $PSScriptRoot "DexKeeper.iss")
+  & iscc.exe /DMyAppExeSource="$exePath" (Join-Path $PSScriptRoot "DexKeeper.iss")
   Write-Host "Installer output: $dist\DexKeeper-Setup.exe"
 } else {
   Write-Host "Inno Setup (iscc.exe) not found; skipping installer packaging."

@@ -2,6 +2,9 @@
 #define MyAppVersion "0.1.0"
 #define MyAppPublisher "DexKeeper"
 #define MyAppExeName "DexKeeper.exe"
+#ifndef MyAppExeSource
+  #define MyAppExeSource "..\\..\\dist\\windows\\DexKeeper.exe"
+#endif
 
 [Setup]
 AppId={{4D4F6A52-9B56-49F2-AD4F-9C4A5F8120E7}
@@ -22,7 +25,7 @@ UninstallDisplayIcon={app}\{#MyAppExeName}
 Name: "autostart"; Description: "Start DexKeeper on login"; Flags: unchecked
 
 [Files]
-Source: "..\..\dist\windows\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#MyAppExeSource}"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\DexKeeper"; Filename: "{app}\{#MyAppExeName}"
