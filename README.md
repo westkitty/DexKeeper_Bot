@@ -90,6 +90,32 @@ Notes:
 - If you want the portable build instead, download `DexKeeper.exe` from the release assets.
 - To auto‑build Windows releases from Git tags, create a tag like `v0.1.1` and push it. GitHub Actions will build and attach the installer.
 
+### Option A3: macOS One‑Click Installer (Unsigned)
+
+1. Go to **Releases** and download `DexKeeper.dmg`.
+2. Open the DMG and drag `DexKeeper.app` into Applications.
+3. On first run, a small window will ask for your `BOT_TOKEN` and optional `ADMIN_ID`.
+4. DexKeeper will store its config and data in `~/Library/Application Support/DexKeeper`.
+
+Notes:
+- macOS will show a Gatekeeper warning because the app is unsigned. You can allow it via System Settings → Privacy & Security.
+- To auto‑build macOS releases from Git tags, create a tag like `v0.1.1` and push it. GitHub Actions will build and attach the DMG.
+
+### Option A4: Linux One‑Click AppImage (Unsigned)
+
+1. Go to **Releases** and download `DexKeeper.AppImage`.
+2. Make it executable and run:
+   ```bash
+   chmod +x DexKeeper.AppImage
+   ./DexKeeper.AppImage
+   ```
+3. On first run, a small window will ask for your `BOT_TOKEN` and optional `ADMIN_ID`.
+4. DexKeeper will store its config and data in `~/.local/share/DexKeeper` (or `$XDG_DATA_HOME/DexKeeper`).
+
+Notes:
+- Some distros require `libfuse2` to run AppImages.
+- To auto‑build Linux releases from Git tags, create a tag like `v0.1.1` and push it. GitHub Actions will build and attach the AppImage.
+
 ### Option B: Clone from Source
 
 We use **Docker** to make this easy. If you don't know what Docker is, think of it as a "program player". We give you the cartridge (this code), and Docker plays it exactly the same on every computer.
