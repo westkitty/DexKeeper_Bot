@@ -34,7 +34,6 @@ jobs:
           path: |
             dist\windows\DexKeeper.exe
             dist\windows\DexKeeper-Setup.exe
-            dist\windows\DexKeeper-Setup-*.exe
 
   build-macos:
     runs-on: macos-latest
@@ -108,7 +107,7 @@ jobs:
         with:
           files: |
             artifacts/windows/DexKeeper.exe
-            artifacts/windows/DexKeeper-Setup-*.exe
+            artifacts/windows/DexKeeper-Setup.exe
             artifacts/macos/DexKeeper.dmg
             artifacts/linux/DexKeeper.AppImage
-          fail_on_unmatched_files: false
+          fail_on_unmatched_files: true
