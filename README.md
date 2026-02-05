@@ -101,7 +101,18 @@ These are the fastest, recommended installs. No command line required.
 Notes:
 - Linux may require `libfuse2` for AppImage support.
 - All installers prompt for your bot token on first run.
-- A tray icon appears while DexKeeper is running; right-click it to **Open Logs**, **Open Data Folder**, **Hide Tray Icon**, or **Stop DexKeeper**.
+- A tray icon appears while DexKeeper is running; right-click it to:
+- Open Logs
+- Open Data Folder
+- Open Admin Panel
+- View Status (Online/Offline + last heartbeat)
+- Start on Login (toggle)
+- Pause Bot (toggle)
+- Silent Mode (toggle)
+- Schedule Daily Restart (toggle)
+- Restart DexKeeper
+- Hide Tray Icon
+- Stop DexKeeper
 
 ### ✅ Option B: Portable Windows EXE (Easy)
 

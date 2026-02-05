@@ -37,7 +37,7 @@ from telegram import (
 from telegram.ext import (
     ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler,
     CallbackQueryHandler, ChatJoinRequestHandler, ChatMemberHandler,
-    ConversationHandler, filters, Defaults, PicklePersistence
+    ConversationHandler, filters, Defaults, PicklePersistence, ApplicationHandlerStop, TypeHandler
 )
 from telegram.error import Forbidden, TelegramError
 
@@ -82,6 +82,11 @@ logger = logging.getLogger("DexKeeper")
 APP_INSTANCE = None
 TRAY_ICON = None
 LAST_UPDATE_NOTICE = None
+PAUSED = False
+SILENT_MODE = False
+HEARTBEAT_ONLINE = False
+LAST_HEARTBEAT = None
+RESTART_JOB = None
 
 RELEASES_URL = "https://github.com/westkitty/DexKeeper_Bot/releases/latest"
 RELEASES_API = "https://api.github.com/repos/westkitty/DexKeeper_Bot/releases/latest"
@@ -99,6 +104,21 @@ def _tray_enabled() -> bool:
         return False
     return True
 
+def _runtime_settings_path() -> Path:
+    return DATA_DIR / "runtime_settings.json"
+
+def _load_runtime_settings() -> Dict[str, Any]:
+    try:
+        return json.loads(_runtime_settings_path().read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+def _save_runtime_settings(data: Dict[str, Any]) -> None:
+    try:
+        _runtime_settings_path().write_text(json.dumps(data, indent=2), encoding="utf-8")
+    except Exception as e:
+        logger.warning("Failed to save runtime settings: %s", e)
+
 def _request_stop():
     logger.info("Stopping DexKeeper...")
     global TRAY_ICON
@@ -115,6 +135,32 @@ def _request_stop():
         except Exception:
             pass
     os._exit(0)
+
+def _restart():
+    try:
+        args = [sys.executable] + sys.argv[1:]
+        subprocess.Popen(args)
+    except Exception as e:
+        logger.warning("Restart failed: %s", e)
+        return
+    _request_stop()
+
+def _open_admin_panel():
+    token = BOT_TOKEN
+    if not token:
+        logger.warning("BOT_TOKEN missing; cannot open admin panel.")
+        return
+    try:
+        url = f"https://api.telegram.org/bot{token}/getMe"
+        with urllib.request.urlopen(url, timeout=5) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        username = data.get("result", {}).get("username")
+        if username:
+            webbrowser.open(f"https://t.me/{username}")
+        else:
+            logger.warning("Bot username not found.")
+    except Exception as e:
+        logger.warning("Failed to open admin panel: %s", e)
 
 def _open_path(path: Path):
     try:
@@ -137,6 +183,135 @@ def _hide_tray():
                 TRAY_ICON.stop()
             except Exception:
                 pass
+    logger.info("Tray icon hidden. To show it again, restart with DEXKEEPER_TRAY=1 or run with --show-tray.")
+
+def _get_launch_command() -> List[str]:
+    if getattr(sys, "frozen", False):
+        return [sys.executable] + sys.argv[1:]
+    return [sys.executable, str(Path(__file__).resolve())] + sys.argv[1:]
+
+def _is_autostart_enabled() -> bool:
+    try:
+        if sys.platform.startswith("win"):
+            import winreg
+            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\\Microsoft\\Windows\\CurrentVersion\\Run")
+            winreg.QueryValueEx(key, "DexKeeper")
+            return True
+        if sys.platform == "darwin":
+            return (Path.home() / "Library" / "LaunchAgents" / "com.dexkeeper.bot.plist").exists()
+        return (Path.home() / ".config" / "autostart" / "dexkeeper.desktop").exists()
+    except Exception:
+        return False
+
+def _set_autostart(enabled: bool):
+    try:
+        if sys.platform.startswith("win"):
+            import winreg
+            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\\Microsoft\\Windows\\CurrentVersion\\Run", 0, winreg.KEY_SET_VALUE)
+            if enabled:
+                cmd = " ".join([f"\"{c}\"" if " " in c else c for c in _get_launch_command()])
+                winreg.SetValueEx(key, "DexKeeper", 0, winreg.REG_SZ, cmd)
+            else:
+                try:
+                    winreg.DeleteValue(key, "DexKeeper")
+                except FileNotFoundError:
+                    pass
+            return
+        if sys.platform == "darwin":
+            plist_path = Path.home() / "Library" / "LaunchAgents" / "com.dexkeeper.bot.plist"
+            if enabled:
+                plist_path.parent.mkdir(parents=True, exist_ok=True)
+                args = _get_launch_command()
+                plist = f"""<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0">\n<dict>\n  <key>Label</key>\n  <string>com.dexkeeper.bot</string>\n  <key>ProgramArguments</key>\n  <array>\n    {''.join([f'<string>{a}</string>' for a in args])}\n  </array>\n  <key>RunAtLoad</key>\n  <true/>\n</dict>\n</plist>\n"""
+                plist_path.write_text(plist, encoding="utf-8")
+                subprocess.Popen(["launchctl", "load", str(plist_path)])
+            else:
+                if plist_path.exists():
+                    subprocess.Popen(["launchctl", "unload", str(plist_path)])
+                    plist_path.unlink(missing_ok=True)
+            return
+        # linux
+        autostart_path = Path.home() / ".config" / "autostart" / "dexkeeper.desktop"
+        if enabled:
+            autostart_path.parent.mkdir(parents=True, exist_ok=True)
+            cmd = " ".join([f"\"{c}\"" if " " in c else c for c in _get_launch_command()])
+            desktop = f\"\"\"[Desktop Entry]\nType=Application\nName=DexKeeper\nExec={cmd}\nX-GNOME-Autostart-enabled=true\n\"\"\"
+            autostart_path.write_text(desktop, encoding="utf-8")
+        else:
+            autostart_path.unlink(missing_ok=True)
+    except Exception as e:
+        logger.warning("Failed to set autostart: %s", e)
+
+def _toggle_autostart():
+    _set_autostart(not _is_autostart_enabled())
+
+def _toggle_pause():
+    global PAUSED
+    PAUSED = not PAUSED
+    status = "paused" if PAUSED else "resumed"
+    logger.info("DexKeeper %s.", status)
+    if TRAY_ICON and hasattr(TRAY_ICON, "notify") and not SILENT_MODE:
+        try:
+            TRAY_ICON.notify(f"DexKeeper {status}", "DexKeeper")
+        except Exception:
+            pass
+
+def _toggle_silent():
+    global SILENT_MODE
+    SILENT_MODE = not SILENT_MODE
+    data = _load_runtime_settings()
+    data["silent_mode"] = SILENT_MODE
+    _save_runtime_settings(data)
+    logger.info("Silent mode %s.", "enabled" if SILENT_MODE else "disabled")
+
+def _status_text() -> str:
+    if LAST_HEARTBEAT:
+        ts = datetime.datetime.fromtimestamp(LAST_HEARTBEAT).strftime("%Y-%m-%d %H:%M:%S")
+    else:
+        ts = "never"
+    state = "Online" if HEARTBEAT_ONLINE else "Offline"
+    return f"Status: {state}\\nLast heartbeat: {ts}"
+
+def _show_status():
+    msg = _status_text()
+    logger.info(msg.replace("\\n", " | "))
+    if SILENT_MODE:
+        return
+    try:
+        import tkinter as tk
+        from tkinter import messagebox
+        root = tk.Tk()
+        root.withdraw()
+        messagebox.showinfo("DexKeeper Status", msg)
+        root.destroy()
+    except Exception:
+        pass
+
+def _schedule_restart_enabled() -> bool:
+    return _load_runtime_settings().get("daily_restart", False)
+
+def _set_daily_restart(enabled: bool):
+    data = _load_runtime_settings()
+    data["daily_restart"] = enabled
+    _save_runtime_settings(data)
+    _apply_restart_schedule()
+
+def _toggle_daily_restart():
+    _set_daily_restart(not _schedule_restart_enabled())
+
+def _apply_restart_schedule():
+    global RESTART_JOB
+    if not APP_INSTANCE:
+        return
+    if RESTART_JOB:
+        try:
+            RESTART_JOB.schedule_removal()
+        except Exception:
+            pass
+        RESTART_JOB = None
+    if _schedule_restart_enabled():
+        time_obj = datetime.time(hour=3, minute=0)
+        RESTART_JOB = APP_INSTANCE.job_queue.run_daily(lambda ctx: _restart(), time=time_obj)
 
 def _get_current_version() -> str:
     try:
@@ -187,11 +362,13 @@ def _notify_update():
     LAST_UPDATE_NOTICE = tag
     msg = f"Update available: {tag}"
     logger.info(msg)
-    if TRAY_ICON and hasattr(TRAY_ICON, "notify"):
+    if TRAY_ICON and hasattr(TRAY_ICON, "notify") and not SILENT_MODE:
         try:
             TRAY_ICON.notify(msg, "DexKeeper")
         except Exception:
             pass
+    if SILENT_MODE:
+        return
     try:
         import tkinter as tk
         from tkinter import messagebox
@@ -206,6 +383,16 @@ def _notify_update():
 def start_update_check():
     t = threading.Thread(target=_notify_update, daemon=True)
     t.start()
+
+async def _heartbeat_job(context):
+    global HEARTBEAT_ONLINE, LAST_HEARTBEAT
+    try:
+        await context.bot.get_me()
+        HEARTBEAT_ONLINE = True
+        LAST_HEARTBEAT = time.time()
+    except Exception:
+        HEARTBEAT_ONLINE = False
+        LAST_HEARTBEAT = time.time()
 
 def start_tray(app):
     global TRAY_ICON
@@ -228,6 +415,13 @@ def start_tray(app):
     menu = pystray.Menu(
         pystray.MenuItem("Open Data Folder", lambda icon, item: _open_path(DATA_DIR)),
         pystray.MenuItem("Open Logs", lambda icon, item: _open_path(LOG_PATH)),
+        pystray.MenuItem("Open Admin Panel", lambda icon, item: _open_admin_panel()),
+        pystray.MenuItem("View Status", lambda icon, item: _show_status()),
+        pystray.MenuItem("Start on Login", lambda icon, item: _toggle_autostart(), checked=lambda item: _is_autostart_enabled()),
+        pystray.MenuItem("Pause Bot", lambda icon, item: _toggle_pause(), checked=lambda item: PAUSED),
+        pystray.MenuItem("Silent Mode", lambda icon, item: _toggle_silent(), checked=lambda item: SILENT_MODE),
+        pystray.MenuItem("Schedule Daily Restart (3:00 AM)", lambda icon, item: _toggle_daily_restart(), checked=lambda item: _schedule_restart_enabled()),
+        pystray.MenuItem("Restart DexKeeper", lambda icon, item: _restart()),
         pystray.MenuItem("Check for Updates", lambda icon, item: webbrowser.open(RELEASES_URL)),
         pystray.MenuItem("Hide Tray Icon", lambda icon, item: _hide_tray()),
         pystray.Menu.SEPARATOR,
@@ -349,6 +543,12 @@ async def log_action(conn, request_id, action, user_id, details=None, admin_id=N
 
 def sanitize(text: str) -> str:
     return html.escape(str(text)[:1000]) if text else ""
+
+# === PAUSE HANDLER ===
+
+async def paused_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if PAUSED:
+        raise ApplicationHandlerStop()
 
 # === FIRST-RUN CONFIG ===
 
@@ -974,10 +1174,19 @@ async def post_init(app):
     # Defaults
     if await get_setting(conn, "welcome_message") is None:
         await set_setting(conn, "welcome_message", "Welcome! Please read the rules.")
+
+    app.job_queue.run_repeating(_heartbeat_job, interval=60, first=5)
     
     logger.info("🚀 DexKeeper Systems Online")
 
 def main():
+    global SILENT_MODE
+    args = set(sys.argv[1:])
+    if "--show-tray" in args:
+        os.environ["DEXKEEPER_TRAY"] = "1"
+    if "--silent" in args:
+        os.environ["DEXKEEPER_SILENT"] = "1"
+
     if not ensure_config():
         return
 
@@ -985,10 +1194,16 @@ def main():
     app = ApplicationBuilder().token(BOT_TOKEN).post_init(post_init).defaults(defaults).build()
     global APP_INSTANCE
     APP_INSTANCE = app
+    SILENT_MODE = os.getenv("DEXKEEPER_SILENT", "0").lower() in ("1", "true", "yes", "on")
+    data = _load_runtime_settings()
+    if "silent_mode" in data:
+        SILENT_MODE = bool(data["silent_mode"])
     start_tray(app)
     start_update_check()
-    
+    _apply_restart_schedule()
+
     # Admin System
+    app.add_handler(TypeHandler(Update, paused_handler), group=0)
     admin_handler = ConversationHandler(
         entry_points=[CommandHandler("admin", admin_panel_cmd)],
         states={
