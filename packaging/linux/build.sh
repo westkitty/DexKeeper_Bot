@@ -41,6 +41,10 @@ cp "$ROOT/assets/DexKeeper_Bot_icon_256.png" "$APPDIR/usr/share/icons/hicolor/25
 cp "$ROOT/packaging/linux/AppRun" "$APPDIR/AppRun"
 chmod +x "$APPDIR/AppRun"
 
+# AppImage expects a .desktop file and icon at the AppDir root
+cp "$ROOT/packaging/linux/DexKeeper.desktop" "$APPDIR/DexKeeper.desktop"
+cp "$ROOT/assets/DexKeeper_Bot_icon_256.png" "$APPDIR/DexKeeper.png"
+
 APPIMAGETOOL="${APPIMAGETOOL:-}" 
 if [ -z "$APPIMAGETOOL" ]; then
   APPIMAGETOOL="$ROOT/build/appimagetool.AppImage"

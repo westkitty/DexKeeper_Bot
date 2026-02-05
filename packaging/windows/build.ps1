@@ -22,6 +22,12 @@ $build = Join-Path $root "build\windows"
 & $pyinstaller $spec --noconfirm --clean --distpath $dist --workpath $build
 
 $exeCandidates = Get-ChildItem -Path $dist -Filter "DexKeeper.exe" -Recurse -ErrorAction SilentlyContinue
+if ($exeCandidates.Count -eq 0) {
+  $exeCandidates = Get-ChildItem -Path $dist -Filter "DexKeeper" -Recurse -File -ErrorAction SilentlyContinue
+}
+if ($exeCandidates.Count -eq 0) {
+  $exeCandidates = Get-ChildItem -Path $dist -Filter "DexKeeper*.exe" -Recurse -ErrorAction SilentlyContinue
+}
 if ($exeCandidates.Count -ge 1) {
   Copy-Item $exeCandidates[0].FullName (Join-Path $dist "DexKeeper.exe") -Force
 }
