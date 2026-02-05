@@ -55,6 +55,7 @@ jobs:
           name: macos-artifacts
           path: |
             dist/macos/DexKeeper.dmg
+            dist/macos/DexKeeper-macos.zip
 
   build-linux:
     runs-on: ubuntu-latest
@@ -109,5 +110,6 @@ jobs:
             artifacts/windows/DexKeeper.exe
             artifacts/windows/DexKeeper-Setup.exe
             artifacts/macos/DexKeeper.dmg
+            artifacts/macos/DexKeeper-macos.zip
             artifacts/linux/DexKeeper.AppImage
           fail_on_unmatched_files: true
