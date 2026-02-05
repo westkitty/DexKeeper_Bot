@@ -4,11 +4,6 @@ on:
   workflow_dispatch:
   push:
     branches: [ main, master ]
-    tags:
-      - 'v*'
-
-permissions:
-  contents: write
 
 jobs:
   build-macos:
@@ -31,11 +26,4 @@ jobs:
           name: dexkeeper-macos-unsigned
           path: |
             dist/macos/DexKeeper.app
-            dist/macos/DexKeeper.dmg
-
-      - name: Publish GitHub Release (tagged builds)
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
             dist/macos/DexKeeper.dmg

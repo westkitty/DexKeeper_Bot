@@ -4,11 +4,6 @@ on:
   workflow_dispatch:
   push:
     branches: [ main, master ]
-    tags:
-      - 'v*'
-
-permissions:
-  contents: write
 
 jobs:
   build-windows:
@@ -34,13 +29,5 @@ jobs:
         with:
           name: dexkeeper-windows-unsigned
           path: |
-            dist\windows\DexKeeper.exe
-            dist\windows\DexKeeper-Setup.exe
-
-      - name: Publish GitHub Release (tagged builds)
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
             dist\windows\DexKeeper.exe
             dist\windows\DexKeeper-Setup.exe
