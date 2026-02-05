@@ -9,6 +9,10 @@
 ![License](https://img.shields.io/badge/License-Unlicense-blue.svg)
 ![Platform](https://img.shields.io/badge/Platform-Docker_|_Python-blue.svg)
 ![Python](https://img.shields.io/badge/Python-3.11-yellow.svg)
+[![Release](https://img.shields.io/github/v/release/westkitty/DexKeeper_Bot?display_name=tag)](https://github.com/westkitty/DexKeeper_Bot/releases/latest)
+[![Windows Build](https://github.com/westkitty/DexKeeper_Bot/actions/workflows/windows-build.yml/badge.svg?branch=main)](https://github.com/westkitty/DexKeeper_Bot/actions/workflows/windows-build.yml)
+[![macOS Build](https://github.com/westkitty/DexKeeper_Bot/actions/workflows/macos-build.yml/badge.svg?branch=main)](https://github.com/westkitty/DexKeeper_Bot/actions/workflows/macos-build.yml)
+[![Linux Build](https://github.com/westkitty/DexKeeper_Bot/actions/workflows/linux-build.yml/badge.svg?branch=main)](https://github.com/westkitty/DexKeeper_Bot/actions/workflows/linux-build.yml)
 [![Sponsor](https://img.shields.io/badge/Sponsor-pink?style=flat-square&logo=github-sponsors)](https://github.com/sponsors/westkitty)
 [![Ko-Fi](https://img.shields.io/badge/Ko--fi-Support%20My%20Work-FF5E5B?style=flat-square&logo=ko-fi&logoColor=white)](https://ko-fi.com/westkitty)
 
@@ -73,7 +77,7 @@ You need to tell Telegram "I am making a bot" and get a key to control it.
 
 **[📥 Download the latest release (.zip)](https://github.com/westkitty/DexKeeper_Bot/releases/latest)**
 
-1. Download `DexKeeper_Bot_v0.1.0.zip` from the Releases page.
+1. Download `DexKeeper_Bot_v0.1.0.zip` from **[Releases](https://github.com/westkitty/DexKeeper_Bot/releases/latest)**.
 2. Extract the ZIP file.
 3. Continue to "Configure the Bot" below.
 
@@ -88,7 +92,7 @@ If you're on Windows, you can install DexKeeper with a one‑click unsigned inst
 
 Notes:
 - If you want the portable build instead, download **[DexKeeper.exe](https://github.com/westkitty/DexKeeper_Bot/releases/latest/download/DexKeeper.exe)**.
-- To auto‑build Windows releases from Git tags, create a tag like `v0.1.1` and push it. GitHub Actions will build and attach the installer.
+- To auto‑build Windows releases from Git tags, create a tag like `v0.1.1` and push it. **[GitHub Actions](https://github.com/westkitty/DexKeeper_Bot/actions)** will build and attach the installer.
 
 ### Option A3: macOS One‑Click Installer (Unsigned)
 
@@ -99,7 +103,7 @@ Notes:
 
 Notes:
 - macOS will show a Gatekeeper warning because the app is unsigned. You can allow it via System Settings → Privacy & Security.
-- To auto‑build macOS releases from Git tags, create a tag like `v0.1.1` and push it. GitHub Actions will build and attach the DMG.
+- To auto‑build macOS releases from Git tags, create a tag like `v0.1.1` and push it. **[GitHub Actions](https://github.com/westkitty/DexKeeper_Bot/actions)** will build and attach the DMG.
 
 ### Option A4: Linux One‑Click AppImage (Unsigned)
 
@@ -114,7 +118,7 @@ Notes:
 
 Notes:
 - Some distros require `libfuse2` to run AppImages.
-- To auto‑build Linux releases from Git tags, create a tag like `v0.1.1` and push it. GitHub Actions will build and attach the AppImage.
+- To auto‑build Linux releases from Git tags, create a tag like `v0.1.1` and push it. **[GitHub Actions](https://github.com/westkitty/DexKeeper_Bot/actions)** will build and attach the AppImage.
 
 ### Option B: Clone from Source
 
