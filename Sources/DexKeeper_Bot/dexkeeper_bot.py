@@ -201,8 +201,9 @@ def _open_admin_panel():
             logger.warning("Bot username not found.")
     except urllib.error.URLError:
         logger.warning("Failed to open admin panel: network error")
-    except Exception as e:
-        logger.warning("Failed to open admin panel: %s", type(e).__name__)
+    except Exception:
+        # Don't log exception details to avoid token exposure
+        logger.warning("Failed to open admin panel: API error")
 
 
 def _open_path(path: Path):
@@ -381,6 +382,14 @@ def _toggle_daily_restart():
     _set_daily_restart(not _schedule_restart_enabled())
 
 
+async def _restart_job(context: ContextTypes.DEFAULT_TYPE):
+    """Async callback for scheduled restarts"""
+    try:
+        _restart()
+    except Exception as e:
+        logger.error(f"Scheduled restart failed: {e}")
+
+
 def _apply_restart_schedule():
     global RESTART_JOB
     if not APP_INSTANCE:
@@ -394,7 +403,7 @@ def _apply_restart_schedule():
     if _schedule_restart_enabled():
         time_obj = datetime.time(hour=3, minute=0)
         RESTART_JOB = APP_INSTANCE.job_queue.run_daily(
-            lambda ctx: _restart(), time=time_obj
+            _restart_job, time=time_obj
         )
 
 
@@ -500,6 +509,27 @@ async def _heartbeat_job(context):
         LAST_HEARTBEAT = time.time()
 
 
+async def _cleanup_spam_cache_job(context):
+    """Periodic cleanup of old spam cache entries to prevent memory leaks"""
+    global SPAM_CACHE, SPAM_LOCKS
+    now = time.time()
+
+    # Clean up users inactive for more than 1 hour
+    inactive_threshold = now - 3600
+    users_to_remove = []
+
+    for user_id, timestamps in list(SPAM_CACHE.items()):
+        if not timestamps or (timestamps and max(timestamps) < inactive_threshold):
+            users_to_remove.append(user_id)
+
+    for user_id in users_to_remove:
+        SPAM_CACHE.pop(user_id, None)
+        SPAM_LOCKS.pop(user_id, None)
+
+    if users_to_remove:
+        logger.debug(f"Cleaned up {len(users_to_remove)} inactive users from spam cache")
+
+
 def start_tray(app):
     global TRAY_ICON
     if not _tray_enabled():
@@ -579,8 +609,10 @@ DB_PATH = os.getenv("DB_PATH") or str(DATA_DIR / "dexkeeper.db")
 
 # Rate Limiting & Anti-Spam Cache
 SPAM_CACHE = collections.defaultdict(list)
-SPAM_LOCKS = {}  # user_id -> asyncio.Lock for concurrency safety
+# Use factory function to create locks on-demand without race condition
+SPAM_LOCKS = collections.defaultdict(asyncio.Lock)  # user_id -> asyncio.Lock for concurrency safety
 LAST_BROADCAST = {}  # admin_id -> timestamp for broadcast rate limiting
+BROADCAST_LOCKS = collections.defaultdict(asyncio.Lock)  # admin_id -> Lock for broadcast rate limiting
 
 # === DATABASE SCHEMA ===
 
@@ -667,27 +699,39 @@ async def get_setting(conn, key: str, default: Any = None) -> Any:
 
 
 async def set_setting(conn, key: str, value: Any):
-    await conn.execute(
-        "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
-        (key, json.dumps(value)),
-    )
-    await conn.commit()
+    """Set a setting with proper error handling and rollback."""
+    try:
+        await conn.execute(
+            "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
+            (key, json.dumps(value)),
+        )
+        await conn.commit()
+    except Exception as e:
+        await conn.rollback()
+        logger.error(f"Failed to set setting '{key}': {e}")
+        raise
 
 
 async def log_action(conn, request_id, action, user_id, details=None, admin_id=None):
+    """Log an action with proper error handling and rollback."""
     if details is None:
         details = {}
-    await conn.execute(
-        "INSERT INTO history (id, user_id, action, details, admin_id) VALUES (?, ?, ?, ?, ?)",
-        (
-            request_id or str(uuid.uuid4()),
-            user_id,
-            action,
-            json.dumps(details),
-            admin_id,
-        ),
-    )
-    await conn.commit()
+    try:
+        await conn.execute(
+            "INSERT INTO history (id, user_id, action, details, admin_id) VALUES (?, ?, ?, ?, ?)",
+            (
+                request_id or str(uuid.uuid4()),
+                user_id,
+                action,
+                json.dumps(details),
+                admin_id,
+            ),
+        )
+        await conn.commit()
+    except Exception as e:
+        await conn.rollback()
+        logger.error(f"Failed to log action '{action}' for user {user_id}: {e}")
+        raise
 
 
 def sanitize(text: str) -> str:
@@ -712,6 +756,11 @@ def _write_env(token: str, admin_id: str = "") -> None:
     elif admin_id:
         logger.warning("ADMIN_ID must be numeric; skipping invalid value.")
     ENV_PATH.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    # Set restrictive file permissions (owner read/write only)
+    try:
+        ENV_PATH.chmod(0o600)
+    except Exception as e:
+        logger.warning(f"Failed to set .env permissions: {e}")
 
 
 def _prompt_console() -> Tuple[Optional[str], Optional[str]]:
@@ -891,7 +940,11 @@ async def handle_zoom_message(update: Update, context: ContextTypes.DEFAULT_TYPE
             return
 
         full_url, meeting_id, passcode = match.groups()
-        host = escape_markdown(update.effective_user.name or "Unknown", version=2)
+        # Safe access to effective_user (may be None in channel posts)
+        user_name = "Unknown"
+        if update.effective_user and update.effective_user.name:
+            user_name = update.effective_user.name
+        host = escape_markdown(user_name, version=2)
 
         # Delete original
         try:
@@ -910,13 +963,13 @@ async def handle_zoom_message(update: Update, context: ContextTypes.DEFAULT_TYPE
             )
         elif style == ZoomStyles.MASCOT:
             msg_text = (
-                f"🦊 **DexKeeper Zoom\-In\!**\\n{host} opened a portal\!\\n\\n"
+                f"🦊 **DexKeeper Zoom\\-In\\!**\\n{host} opened a portal\\!\\n\\n"
                 f"🌟 **ID:** `{meeting_id}`\\n"
                 + (f"🔑 **Code:** `{passcode}`\\n" if passcode else "")
                 + f"\\n🚀 [Jump In]({full_url})"
             )
         elif style == ZoomStyles.MINIMAL:
-            msg_text = f"**Zoom:** [Join Now]({full_url}) \(ID: `{meeting_id}`\)"
+            msg_text = f"**Zoom:** [Join Now]({full_url}) \\(ID: `{meeting_id}`\\)"
         elif style == ZoomStyles.CUSTOM:
             tmpl = await get_setting(conn, "custom_zoom_template", "{url}")
             msg_text = (
@@ -1056,12 +1109,20 @@ async def admin_selection_handler(update: Update, context: ContextTypes.DEFAULT_
 
     # Navigation
     if data.startswith("menu:"):
-        await show_admin_menu(update, context, data.split(":")[1])
+        parts = data.split(":", 1)
+        if len(parts) == 2:
+            await show_admin_menu(update, context, parts[1])
+        else:
+            await query.answer("Invalid menu selection", show_alert=True)
         return MENU
 
     # Zoom Style Setter (Fix for Wiring Check)
     if data.startswith("set_zoom_style:"):
-        new_style = data.split(":")[1]
+        parts = data.split(":", 1)
+        if len(parts) != 2:
+            await query.answer("Invalid style selection", show_alert=True)
+            return MENU
+        new_style = parts[1]
         conn = context.application.db_conn
         await set_setting(conn, "zoom_style", new_style)
 
@@ -1199,16 +1260,17 @@ async def handle_broadcast_input(update: Update, context: ContextTypes.DEFAULT_T
     admin_id = update.effective_user.id
     now = time.time()
 
-    # Rate limit: 60 seconds between broadcasts
-    if admin_id in LAST_BROADCAST and now - LAST_BROADCAST[admin_id] < 60:
-        remaining = int(60 - (now - LAST_BROADCAST[admin_id]))
-        await update.message.reply_text(
-            f"⏳ Please wait {remaining}s between broadcasts"
-        )
-        await show_admin_menu(update, context, "engage")
-        return MENU
+    # Rate limit: 60 seconds between broadcasts (with lock to prevent race condition)
+    async with BROADCAST_LOCKS[admin_id]:
+        if admin_id in LAST_BROADCAST and now - LAST_BROADCAST[admin_id] < 60:
+            remaining = int(60 - (now - LAST_BROADCAST[admin_id]))
+            await update.message.reply_text(
+                f"⏳ Please wait {remaining}s between broadcasts"
+            )
+            await show_admin_menu(update, context, "engage")
+            return MENU
 
-    LAST_BROADCAST[admin_id] = now
+        LAST_BROADCAST[admin_id] = now
     message = update.message.text
     conn = context.application.db_conn
 
@@ -1257,12 +1319,18 @@ async def export_data_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         for r in rows:
             writer.writerow(list(r))
 
-    await context.bot.send_document(
-        chat_id=update.effective_chat.id,
-        document=open(filename, "rb"),
-        caption="📊 **DexKeeper User Export**",
-    )
-    os.remove(filename)
+    try:
+        with open(filename, "rb") as f:
+            await context.bot.send_document(
+                chat_id=update.effective_chat.id,
+                document=f,
+                caption="📊 **DexKeeper User Export**",
+            )
+    finally:
+        try:
+            os.remove(filename)
+        except Exception as e:
+            logger.warning(f"Failed to remove temp CSV file: {e}")
 
     if update.callback_query:
         await show_admin_menu(update, context, "users")
@@ -1283,6 +1351,11 @@ async def handle_id_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def handle_id_action_real(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message or not update.message.text:
+        await update.message.reply_text("❌ Invalid input")
+        await show_admin_menu(update, context, "users")
+        return MENU
+
     uid_str = update.message.text.strip()
     try:
         user_id = int(uid_str)
@@ -1298,33 +1371,58 @@ async def handle_id_action_real(update: Update, context: ContextTypes.DEFAULT_TY
 
     try:
         if action == "ban":
-            bl = await get_setting(conn, "blacklist", [])
-            if user_id not in bl:
-                bl.append(user_id)
-                await set_setting(conn, "blacklist", bl)
-            # Explicit commit after DB write
-            await conn.commit()
-            # Kick happens after DB commit succeeds
+            # Use transaction to prevent TOCTOU race condition
+            await conn.execute("BEGIN IMMEDIATE")
             try:
-                await context.bot.ban_chat_member(update.effective_chat.id, user_id)
-            except TelegramError as e:
-                logger.warning(f"Ban API call failed (user blacklisted anyway): {e}")
-            await update.message.reply_text(f"🚫 Banned {user_id}")
+                bl = await get_setting(conn, "blacklist", [])
+                if user_id not in bl:
+                    bl.append(user_id)
+                    # set_setting will commit; we need to handle it specially
+                    await conn.execute(
+                        "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
+                        ("blacklist", json.dumps(bl)),
+                    )
+                await conn.commit()
+
+                # Kick happens after DB commit succeeds
+                api_success = True
+                try:
+                    await context.bot.ban_chat_member(update.effective_chat.id, user_id)
+                except TelegramError as e:
+                    api_success = False
+                    logger.warning(f"Ban API call failed (user blacklisted in DB): {e}")
+
+                if api_success:
+                    await update.message.reply_text(f"🚫 Banned {user_id}")
+                else:
+                    await update.message.reply_text(
+                        f"⚠️ User {user_id} added to blacklist, but bot lacks permission to ban from chat"
+                    )
+            except Exception:
+                await conn.rollback()
+                raise
 
         elif action == "unban":
-            bl = await get_setting(conn, "blacklist", [])
-            if user_id in bl:
-                bl.remove(user_id)
-                await set_setting(conn, "blacklist", bl)
-            await conn.commit()
-            await update.message.reply_text(f"✅ Unbanned {user_id}")
+            await conn.execute("BEGIN IMMEDIATE")
+            try:
+                bl = await get_setting(conn, "blacklist", [])
+                if user_id in bl:
+                    bl.remove(user_id)
+                    await conn.execute(
+                        "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
+                        ("blacklist", json.dumps(bl)),
+                    )
+                await conn.commit()
+                await update.message.reply_text(f"✅ Unbanned {user_id}")
+            except Exception:
+                await conn.rollback()
+                raise
 
         elif action == "view":
             # Fetch info
             text = f"👤 User {user_id}\n(Details fetched from DB...)"
             await update.message.reply_text(text)
     except Exception as e:
-        await conn.rollback()
         logger.error(f"Action '{action}' failed for user {user_id}: {e}")
         await update.message.reply_text(f"❌ Operation failed: {type(e).__name__}")
 
@@ -1378,13 +1476,24 @@ async def handle_schedule_time(update: Update, context: ContextTypes.DEFAULT_TYP
         return INPUT_SCHEDULE_TIME
 
 
+async def _send_scheduled_message(context: ContextTypes.DEFAULT_TYPE):
+    """Async callback for scheduled messages"""
+    try:
+        await context.bot.send_message(
+            chat_id=context.job.data["cid"],
+            text=context.job.data["text"]
+        )
+    except Exception as e:
+        logger.error(f"Failed to send scheduled message: {e}")
+
+
 async def handle_schedule_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     mins = context.user_data["sched_mins"]
     text = update.message.text
     # Job Queue Logic
     if context.job_queue:
         context.job_queue.run_once(
-            lambda ctx: ctx.bot.send_message(ctx.job.data["cid"], ctx.job.data["text"]),
+            _send_scheduled_message,
             mins * 60,
             data={"cid": update.effective_chat.id, "text": text},
             name=str(uuid.uuid4()),
@@ -1496,9 +1605,7 @@ async def global_middleware(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Flood Gate with asyncio lock for concurrency safety
     uid = user.id
-    if uid not in SPAM_LOCKS:
-        SPAM_LOCKS[uid] = asyncio.Lock()
-
+    # defaultdict creates lock automatically on first access (no race condition)
     async with SPAM_LOCKS[uid]:
         now = datetime.datetime.now().timestamp()
         history = SPAM_CACHE.get(uid, [])
@@ -1563,22 +1670,37 @@ async def on_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def verify_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    uid = int(query.data.split(":")[1])
+    parts = query.data.split(":", 1)
+    if len(parts) != 2:
+        await query.answer("Invalid verification data", show_alert=True)
+        return
+
+    try:
+        uid = int(parts[1])
+    except ValueError:
+        await query.answer("Invalid user ID", show_alert=True)
+        return
+
     if update.effective_user.id != uid:
         await query.answer("Not for you!", show_alert=True)
         return
-    await context.bot.restrict_chat_member(
-        update.effective_chat.id,
-        uid,
-        ChatPermissions(
-            can_send_messages=True,
-            can_send_media_messages=True,
-            can_send_other_messages=True,
-        ),
-    )
-    await query.message.delete()
-    tmpl = await get_setting(context.application.db_conn, "welcome_message", "Welcome!")
-    await context.bot.send_message(update.effective_chat.id, tmpl)
+
+    try:
+        await context.bot.restrict_chat_member(
+            update.effective_chat.id,
+            uid,
+            ChatPermissions(
+                can_send_messages=True,
+                can_send_media_messages=True,
+                can_send_other_messages=True,
+            ),
+        )
+        await query.message.delete()
+        tmpl = await get_setting(context.application.db_conn, "welcome_message", "Welcome!")
+        await context.bot.send_message(update.effective_chat.id, tmpl)
+    except TelegramError as e:
+        logger.warning(f"Failed to verify user {uid}: {e}")
+        await query.answer("Verification failed", show_alert=True)
 
 
 # === MAIN ===
@@ -1607,7 +1729,9 @@ async def post_init(app):
     if await get_setting(conn, "welcome_message") is None:
         await set_setting(conn, "welcome_message", "Welcome! Please read the rules.")
 
+    # Background jobs
     app.job_queue.run_repeating(_heartbeat_job, interval=60, first=5)
+    app.job_queue.run_repeating(_cleanup_spam_cache_job, interval=3600, first=600)  # Every hour, start after 10min
 
     logger.info("🚀 DexKeeper Systems Online")
 
