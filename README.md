@@ -106,6 +106,7 @@ We use **Docker** to make this easy. If you don't know what Docker is, think of 
     ADMIN_ID=123456789
     ```
 6.  Save and close.
+7.  Note: On packaged desktop installs, the app will prompt for `BOT_TOKEN` on first run and store config in your per-user app data folder.
 
 ### Step 4: Run It
 1.  **Open Terminal** (Mac/Linux) or **PowerShell** (Windows).
@@ -127,6 +128,7 @@ If you prefer to run Python directly:
     pip install -r requirements.txt
     ```
 3.  **Configure**: Create `.env` as shown above.
+    *   Optional: set `DEXKEEPER_DATA_DIR` or `DB_PATH` if you want a custom data location.
 4.  **Run**:
     ```bash
     python3 Sources/DexKeeper_Bot/dexkeeper_bot.py

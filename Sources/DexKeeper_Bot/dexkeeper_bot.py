@@ -18,6 +18,8 @@ import logging
 import datetime
 import functools
 import collections
+import sys
+from pathlib import Path
 from typing import Optional, List, Dict, Union, Tuple, Any
 
 import aiosqlite
@@ -36,16 +38,50 @@ from telegram.error import Forbidden, TelegramError
 
 # === CONFIGURATION ===
 
+APP_NAME = "DexKeeper"
+
+def _in_docker() -> bool:
+    return os.path.exists("/.dockerenv") or os.path.exists("/app/dexkeeper_bot.py")
+
+def _get_data_dir() -> Path:
+    override = os.getenv("DEXKEEPER_DATA_DIR")
+    if override:
+        return Path(override).expanduser()
+    if _in_docker():
+        return Path("/app/data")
+    if sys.platform.startswith("win"):
+        base = os.getenv("APPDATA") or (Path.home() / "AppData" / "Roaming")
+        return Path(base) / APP_NAME
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / APP_NAME
+    xdg = os.getenv("XDG_DATA_HOME")
+    if xdg:
+        return Path(xdg) / APP_NAME
+    return Path.home() / ".local" / "share" / APP_NAME
+
+DATA_DIR = _get_data_dir()
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+ENV_PATH = DATA_DIR / ".env"
+LOG_PATH = DATA_DIR / "dexkeeper.log"
+
 logging.basicConfig(
     format='%(asctime)s - [%(name)s] - %(levelname)s - %(message)s',
-    level=logging.INFO
+    level=logging.INFO,
+    handlers=[
+        logging.FileHandler(LOG_PATH, encoding="utf-8"),
+        logging.StreamHandler()
+    ]
 )
 logger = logging.getLogger("DexKeeper")
 
-load_dotenv()
+def _load_env():
+    load_dotenv(dotenv_path=ENV_PATH, override=False)
+    load_dotenv(override=False)
+
+_load_env()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0")) # Fallback to 0 if missing
-DB_PATH = os.getenv("DB_PATH", "data/dexkeeper.db") # DexKeeper DB
+DB_PATH = os.getenv("DB_PATH") or str(DATA_DIR / "dexkeeper.db")
 
 # Rate Limiting & Anti-Spam Cache
 SPAM_CACHE = collections.defaultdict(list)
@@ -143,6 +179,86 @@ async def log_action(conn, request_id, action, user_id, details=None, admin_id=N
 
 def sanitize(text: str) -> str:
     return html.escape(str(text)[:1000]) if text else ""
+
+# === FIRST-RUN CONFIG ===
+
+def _write_env(token: str, admin_id: str = "") -> None:
+    lines = [f"BOT_TOKEN={token}"]
+    if admin_id:
+        lines.append(f"ADMIN_ID={admin_id}")
+    ENV_PATH.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+def _prompt_console() -> Tuple[Optional[str], Optional[str]]:
+    try:
+        token = input("Enter BOT_TOKEN: ").strip()
+        admin = input("Enter ADMIN_ID (optional): ").strip()
+        return token or None, admin or None
+    except EOFError:
+        return None, None
+
+def _prompt_gui() -> Tuple[Optional[str], Optional[str]]:
+    try:
+        import tkinter as tk
+        from tkinter import messagebox
+    except Exception:
+        return None, None
+
+    root = tk.Tk()
+    root.title("DexKeeper Setup")
+    root.resizable(False, False)
+
+    token_var = tk.StringVar()
+    admin_var = tk.StringVar()
+
+    tk.Label(root, text="Telegram BOT_TOKEN (required):").grid(row=0, column=0, sticky="w", padx=10, pady=6)
+    tk.Entry(root, textvariable=token_var, width=50).grid(row=1, column=0, padx=10)
+    tk.Label(root, text="ADMIN_ID (optional):").grid(row=2, column=0, sticky="w", padx=10, pady=6)
+    tk.Entry(root, textvariable=admin_var, width=50).grid(row=3, column=0, padx=10)
+
+    result = {"token": None, "admin": None}
+
+    def on_save():
+        token = token_var.get().strip()
+        if not token:
+            messagebox.showerror("DexKeeper", "BOT_TOKEN is required.")
+            return
+        result["token"] = token
+        result["admin"] = admin_var.get().strip() or None
+        root.destroy()
+
+    def on_close():
+        root.destroy()
+
+    btn = tk.Button(root, text="Save", command=on_save)
+    btn.grid(row=4, column=0, pady=10)
+    root.protocol("WM_DELETE_WINDOW", on_close)
+    root.mainloop()
+    return result["token"], result["admin"]
+
+def ensure_config() -> bool:
+    global BOT_TOKEN, ADMIN_ID, DB_PATH
+
+    if BOT_TOKEN:
+        return True
+
+    if sys.stdin and sys.stdin.isatty():
+        token, admin = _prompt_console()
+    else:
+        token, admin = _prompt_gui()
+
+    if not token:
+        print("❌ CRITICAL: BOT_TOKEN missing in .env")
+        return False
+
+    _write_env(token, admin or "")
+    os.environ["BOT_TOKEN"] = token
+    if admin:
+        os.environ["ADMIN_ID"] = admin
+
+    BOT_TOKEN = os.getenv("BOT_TOKEN")
+    ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
+    DB_PATH = os.getenv("DB_PATH") or str(DATA_DIR / "dexkeeper.db")
+    return True
 
 # === DECORATORS ===
 
@@ -412,12 +528,12 @@ async def handle_broadcast_input(update: Update, context: ContextTypes.DEFAULT_T
 async def export_data_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Generate CSV Export"""
     conn = context.application.db_conn
-    filename = f"dexkeeper_users_{int(time.time())}.csv"
+    filename = DATA_DIR / f"dexkeeper_users_{int(time.time())}.csv"
     
     async with conn.execute("SELECT * FROM users") as cursor:
         rows = await cursor.fetchall()
         
-    with open(filename, 'w', newline='') as f:
+    with open(filename, 'w', newline='', encoding="utf-8") as f:
         writer = csv.writer(f)
         writer.writerow(["User ID", "Username", "Name", "Language", "Joined", "Status"])
         for r in rows:
@@ -671,8 +787,7 @@ async def post_init(app):
     logger.info("🚀 DexKeeper Systems Online")
 
 def main():
-    if not BOT_TOKEN:
-        print("❌ CRITICAL: BOT_TOKEN missing in .env")
+    if not ensure_config():
         return
 
     defaults = Defaults(parse_mode='Markdown', block=False)
