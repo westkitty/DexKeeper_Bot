@@ -18,13 +18,24 @@ import functools
 import collections
 import sys
 import threading
-import subprocess
+
+# subprocess used with fixed, trusted commands
+import subprocess  # nosec B404
 import webbrowser
 import urllib.request
 import urllib.error
 import aiohttp  # Added aiohttp
 from pathlib import Path
-from typing import Optional, List, Dict, Tuple, Any
+from typing import (
+    Optional,
+    List,
+    Dict,
+    Tuple,
+    Any,
+    DefaultDict,
+    cast,
+    Protocol,
+)
 
 # Python version check
 if sys.version_info < (3, 9):
@@ -36,7 +47,13 @@ if sys.version_info < (3, 9):
 
 import aiosqlite
 from dotenv import load_dotenv
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatPermissions
+from telegram import (
+    Update,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    ChatPermissions,
+    Message,
+)
 from telegram.helpers import escape_markdown
 from telegram.ext import (
     ApplicationBuilder,
@@ -84,15 +101,53 @@ def _get_data_dir() -> Path:
     return Path.home() / ".local" / "share" / APP_NAME
 
 
-DATA_DIR = _get_data_dir()
-DATA_DIR.mkdir(parents=True, exist_ok=True)
+def _init_data_dir() -> Path:
+    path = _get_data_dir()
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+    except Exception as e:
+        fallback = Path.cwd() / ".dexkeeper_data"
+        try:
+            fallback.mkdir(parents=True, exist_ok=True)
+            print(
+                f"⚠️ DexKeeper: failed to use data dir {path} ({e}); using {fallback}",
+                file=sys.stderr,
+            )
+            return fallback
+        except Exception as fallback_error:
+            print(
+                f"⚠️ DexKeeper: failed to create fallback data dir {fallback} ({fallback_error})",
+                file=sys.stderr,
+            )
+            return path
+
+
+DATA_DIR = _init_data_dir()
 ENV_PATH = DATA_DIR / ".env"
-LOG_PATH = DATA_DIR / "dexkeeper.log"
+LOG_PATH = Path(os.getenv("DEXKEEPER_LOG_PATH", str(DATA_DIR / "dexkeeper.log")))
+
+
+def _build_log_handlers(log_path: Path) -> List[logging.Handler]:
+    handlers: List[logging.Handler] = [logging.StreamHandler()]
+    if os.getenv("DEXKEEPER_DISABLE_FILE_LOG", "0").lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    ):
+        return handlers
+    try:
+        handlers.insert(0, logging.FileHandler(log_path, encoding="utf-8"))
+    except Exception as e:
+        print(f"⚠️ DexKeeper: file logging disabled ({e})", file=sys.stderr)
+    return handlers
+
 
 logging.basicConfig(
     format="%(asctime)s - [%(name)s] - %(levelname)s - %(message)s",
     level=logging.INFO,
-    handlers=[logging.FileHandler(LOG_PATH, encoding="utf-8"), logging.StreamHandler()],
+    handlers=_build_log_handlers(LOG_PATH),
 )
 logger = logging.getLogger("DexKeeper")
 
@@ -178,7 +233,8 @@ def _request_stop():
 def _restart():
     try:
         args = [sys.executable] + sys.argv[1:]
-        subprocess.Popen(args)  # noqa: S603
+        # controlled args
+        subprocess.Popen(args)  # noqa: S603  # nosec B603
     except Exception as e:
         logger.warning("Restart failed: %s", e)
         return
@@ -192,7 +248,8 @@ def _open_admin_panel():
         return
     try:
         url = f"https://api.telegram.org/bot{token}/getMe"
-        with urllib.request.urlopen(url, timeout=5) as resp:  # noqa: S310
+        # fixed https URL
+        with urllib.request.urlopen(url, timeout=5) as resp:  # noqa: S310  # nosec B310
             data = json.loads(resp.read().decode("utf-8"))
         username = data.get("result", {}).get("username")
         if username:
@@ -209,11 +266,14 @@ def _open_admin_panel():
 def _open_path(path: Path):
     try:
         if sys.platform.startswith("win"):
-            os.startfile(str(path))  # noqa: S606
+            # system file opener
+            os.startfile(str(path))  # noqa: S606  # nosec B606
         elif sys.platform == "darwin":
-            subprocess.Popen(["/usr/bin/open", str(path)])  # noqa: S603
+            # system file opener
+            subprocess.Popen(["/usr/bin/open", str(path)])  # noqa: S603  # nosec B603
         else:
-            subprocess.Popen(["xdg-open", str(path)])  # noqa: S603, S607
+            # system file opener
+            subprocess.Popen(["xdg-open", str(path)])  # noqa: S603, S607  # nosec B603 B607
     except Exception as e:
         logger.warning("Failed to open path %s: %s", path, e)
 
@@ -290,10 +350,12 @@ def _set_autostart(enabled: bool):
                 args = _get_launch_command()
                 plist = f"""<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0">\n<dict>\n  <key>Label</key>\n  <string>com.dexkeeper.bot</string>\n  <key>ProgramArguments</key>\n  <array>\n    {"".join([f"<string>{a}</string>" for a in args])}\n  </array>\n  <key>RunAtLoad</key>\n  <true/>\n</dict>\n</plist>\n"""
                 plist_path.write_text(plist, encoding="utf-8")
-                subprocess.Popen(["/bin/launchctl", "load", str(plist_path)])  # noqa: S603
+                # system service manager
+                subprocess.Popen(["/bin/launchctl", "load", str(plist_path)])  # noqa: S603  # nosec B603
             else:
                 if plist_path.exists():
-                    subprocess.Popen(["/bin/launchctl", "unload", str(plist_path)])  # noqa: S603
+                    # system service manager
+                    subprocess.Popen(["/bin/launchctl", "unload", str(plist_path)])  # noqa: S603  # nosec B603
                     plist_path.unlink(missing_ok=True)
             return
         # linux
@@ -402,9 +464,7 @@ def _apply_restart_schedule():
         RESTART_JOB = None
     if _schedule_restart_enabled():
         time_obj = datetime.time(hour=3, minute=0)
-        RESTART_JOB = APP_INSTANCE.job_queue.run_daily(
-            _restart_job, time=time_obj
-        )
+        RESTART_JOB = APP_INSTANCE.job_queue.run_daily(_restart_job, time=time_obj)
 
 
 def _get_current_version() -> str:
@@ -527,7 +587,9 @@ async def _cleanup_spam_cache_job(context):
         SPAM_LOCKS.pop(user_id, None)
 
     if users_to_remove:
-        logger.debug(f"Cleaned up {len(users_to_remove)} inactive users from spam cache")
+        logger.debug(
+            f"Cleaned up {len(users_to_remove)} inactive users from spam cache"
+        )
 
 
 def start_tray(app):
@@ -535,7 +597,7 @@ def start_tray(app):
     if not _tray_enabled():
         return
     try:
-        import pystray
+        import pystray  # type: ignore[import-untyped]
         from PIL import Image
     except Exception as e:
         logger.warning("Tray icon disabled: %s", e)
@@ -608,11 +670,11 @@ ADMIN_ID = _parse_admin_id(os.getenv("ADMIN_ID"))
 DB_PATH = os.getenv("DB_PATH") or str(DATA_DIR / "dexkeeper.db")
 
 # Rate Limiting & Anti-Spam Cache
-SPAM_CACHE = collections.defaultdict(list)
+SPAM_CACHE: DefaultDict[int, List[float]] = collections.defaultdict(list)
 # Use factory function to create locks on-demand without race condition
-SPAM_LOCKS = collections.defaultdict(asyncio.Lock)  # user_id -> asyncio.Lock for concurrency safety
-LAST_BROADCAST = {}  # admin_id -> timestamp for broadcast rate limiting
-BROADCAST_LOCKS = collections.defaultdict(asyncio.Lock)  # admin_id -> Lock for broadcast rate limiting
+SPAM_LOCKS: DefaultDict[int, asyncio.Lock] = collections.defaultdict(asyncio.Lock)
+LAST_BROADCAST: Dict[int, float] = {}
+BROADCAST_LOCKS: DefaultDict[int, asyncio.Lock] = collections.defaultdict(asyncio.Lock)
 
 # === DATABASE SCHEMA ===
 
@@ -690,6 +752,43 @@ i18n = I18n()
 # === HELPERS ===
 
 
+class _HasDB(Protocol):
+    db_conn: aiosqlite.Connection
+
+
+def _get_db(context: ContextTypes.DEFAULT_TYPE) -> aiosqlite.Connection:
+    app = cast(_HasDB, context.application)
+    return app.db_conn
+
+
+async def _is_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    user = update.effective_user
+    if not user:
+        return False
+    if user.id == ADMIN_ID:
+        return True
+    try:
+        admins = await get_setting(_get_db(context), "admins", [])
+    except Exception:
+        return False
+    return user.id in admins
+
+
+async def _require_admin(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    *,
+    alert: bool = True,
+) -> bool:
+    if await _is_admin(update, context):
+        return True
+    if update.callback_query:
+        await update.callback_query.answer("⛔ Admin only.", show_alert=alert)
+    elif update.effective_message:
+        await update.effective_message.reply_text("⛔ Access Denied: Admin only.")
+    return False
+
+
 async def get_setting(conn, key: str, default: Any = None) -> Any:
     async with conn.execute(
         "SELECT value FROM settings WHERE key = ?", (key,)
@@ -736,6 +835,35 @@ async def log_action(conn, request_id, action, user_id, details=None, admin_id=N
 
 def sanitize(text: str) -> str:
     return html.escape(str(text)[:1000]) if text else ""
+
+
+def _parse_poll_options(text: str) -> List[str]:
+    return [option.strip() for option in text.split(",") if option.strip()]
+
+
+def _parse_schedule_minutes(text: str) -> Optional[int]:
+    try:
+        mins = int(text)
+    except (TypeError, ValueError):
+        return None
+    if mins < 1 or mins > 60 * 24 * 7:
+        return None
+    return mins
+
+
+def _unrestricted_permissions() -> ChatPermissions:
+    return ChatPermissions(
+        can_send_messages=True,
+        can_send_polls=True,
+        can_send_other_messages=True,
+        can_add_web_page_previews=True,
+        can_send_audios=True,
+        can_send_documents=True,
+        can_send_photos=True,
+        can_send_videos=True,
+        can_send_video_notes=True,
+        can_send_voice_notes=True,
+    )
 
 
 # === PAUSE HANDLER ===
@@ -809,7 +937,8 @@ def _prompt_gui() -> Tuple[Optional[str], Optional[str]]:
             return
         try:
             url = f"https://api.telegram.org/bot{token}/getMe"
-            with urllib.request.urlopen(url, timeout=5) as resp:  # noqa: S310
+            # fixed https URL
+            with urllib.request.urlopen(url, timeout=5) as resp:  # noqa: S310  # nosec B310
                 data = json.loads(resp.read().decode("utf-8"))
             if data.get("ok"):
                 status_var.set("✅ Token verified.")
@@ -879,26 +1008,9 @@ def admin_only(func):
     async def wrapper(
         update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs
     ):
-        user = update.effective_user
-        if not user:
+        if not await _require_admin(update, context):
             return
-        user_id = user.id
-        conn = context.application.db_conn
-
-        # Check Env Admin
-        if user_id == ADMIN_ID:
-            return await func(update, context, *args, **kwargs)
-
-        # Check DB Admins
-        admins = await get_setting(conn, "admins", [])
-        if user_id in admins:
-            return await func(update, context, *args, **kwargs)
-
-        # Fail
-        msg = update.effective_message
-        if msg:
-            await msg.reply_text("⛔ Access Denied: Admin only.")
-        return
+        return await func(update, context, *args, **kwargs)
 
     return wrapper
 
@@ -921,10 +1033,17 @@ class ZoomStyles:
             ZoomStyles.CUSTOM: "✨ Custom Template",
         }
 
+    @staticmethod
+    def label(style: str) -> str:
+        return ZoomStyles.get_style_names().get(style, style)
+
 
 async def handle_zoom_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Regex scan for Zoom links"""
     if not update.message or not update.message.text:
+        return
+    chat = update.effective_chat
+    if not chat:
         return
 
     text = update.message.text
@@ -933,7 +1052,7 @@ async def handle_zoom_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     match = re.search(zoom_pattern, text)
 
     if match:
-        conn = context.application.db_conn
+        conn = _get_db(context)
         style = await get_setting(conn, "zoom_style", ZoomStyles.PROFESSIONAL)
 
         if style == "off":
@@ -980,7 +1099,7 @@ async def handle_zoom_message(update: Update, context: ContextTypes.DEFAULT_TYPE
             )
 
         await context.bot.send_message(
-            chat_id=update.effective_chat.id, text=msg_text, parse_mode="MarkdownV2"
+            chat_id=chat.id, text=msg_text, parse_mode="MarkdownV2"
         )
 
 
@@ -1095,17 +1214,23 @@ async def show_admin_menu(
         await update.callback_query.edit_message_text(
             text, reply_markup=markup, parse_mode="Markdown"
         )
-    else:
+    elif update.message:
         await update.message.reply_text(
             text, reply_markup=markup, parse_mode="Markdown"
         )
+    else:
+        return
 
 
 async def admin_selection_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Main Switchboard for Dashboard Buttons"""
     query = update.callback_query
+    if not query or query.data is None:
+        return MENU
+    if not await _require_admin(update, context):
+        return ConversationHandler.END
     await query.answer()
-    data = query.data
+    data = str(query.data)
 
     # Navigation
     if data.startswith("menu:"):
@@ -1123,12 +1248,10 @@ async def admin_selection_handler(update: Update, context: ContextTypes.DEFAULT_
             await query.answer("Invalid style selection", show_alert=True)
             return MENU
         new_style = parts[1]
-        conn = context.application.db_conn
+        conn = _get_db(context)
         await set_setting(conn, "zoom_style", new_style)
 
-        style_name = (
-            ZoomStyles.get_style_names().get(new_style, new_style).split(" ")[1]
-        )  # Simple parse
+        style_name = ZoomStyles.label(new_style)
         await query.answer(f"Style set to: {style_name}")
         await zoom_config_menu(update, context)  # Refresh menu
         return MENU
@@ -1137,9 +1260,11 @@ async def admin_selection_handler(update: Update, context: ContextTypes.DEFAULT_
     cancel_markup = InlineKeyboardMarkup(
         [[InlineKeyboardButton("❌ Cancel", callback_data="admin:cancel_input")]]
     )
+    user_data = cast(Dict[str, Any], context.user_data)
 
     # Module A: User Actions
     if data == "action:ban_start":
+        user_data["action_type"] = "ban"
         await query.edit_message_text(
             "🔨 **Ban User**\nSend User ID:",
             reply_markup=cancel_markup,
@@ -1147,7 +1272,7 @@ async def admin_selection_handler(update: Update, context: ContextTypes.DEFAULT_
         )
         return INPUT_BAN
     if data == "action:unban_start":
-        context.user_data["action_type"] = "unban"
+        user_data["action_type"] = "unban"
         await query.edit_message_text(
             "🏳️ **Unban User**\nSend User ID:",
             reply_markup=cancel_markup,
@@ -1155,7 +1280,7 @@ async def admin_selection_handler(update: Update, context: ContextTypes.DEFAULT_
         )
         return INPUT_BAN
     if data == "action:view_start":
-        context.user_data["action_type"] = "view"
+        user_data["action_type"] = "view"
         await query.edit_message_text(
             "🔍 **View User**\nSend User ID:",
             reply_markup=cancel_markup,
@@ -1189,9 +1314,7 @@ async def admin_selection_handler(update: Update, context: ContextTypes.DEFAULT_
         )
         return INPUT_TOPIC
     if data == "action:welcome_start":
-        curr = await get_setting(
-            context.application.db_conn, "welcome_message", "Welcome!"
-        )
+        curr = await get_setting(_get_db(context), "welcome_message", "Welcome!")
         await query.edit_message_text(
             f"👋 **Edit Welcome**\nCurrent: `{curr}`\n\nSend new text:",
             reply_markup=cancel_markup,
@@ -1215,7 +1338,7 @@ async def admin_selection_handler(update: Update, context: ContextTypes.DEFAULT_
 
     # Security Actions
     if data == "action:filter_start":
-        words = await get_setting(context.application.db_conn, "auto_decline_words", [])
+        words = await get_setting(_get_db(context), "auto_decline_words", [])
         await query.edit_message_text(
             f"🤬 **Bad Words**\nCurrent: {', '.join(words)}\n\nSend word to Add/Remove:",
             reply_markup=cancel_markup,
@@ -1223,7 +1346,7 @@ async def admin_selection_handler(update: Update, context: ContextTypes.DEFAULT_
         )
         return INPUT_FILTER
     if data == "action:lockdown_toggle":
-        conn = context.application.db_conn
+        conn = _get_db(context)
         curr = await get_setting(conn, "lockdown_mode", False)
         await set_setting(conn, "lockdown_mode", not curr)
         await query.answer(
@@ -1238,7 +1361,9 @@ async def admin_selection_handler(update: Update, context: ContextTypes.DEFAULT_
         return MENU
 
     if data == "admin:close":
-        await query.message.delete()
+        msg = query.message
+        if msg:
+            await cast(Message, msg).delete()
         return ConversationHandler.END
 
     return MENU
@@ -1250,13 +1375,25 @@ async def admin_selection_handler(update: Update, context: ContextTypes.DEFAULT_
 async def handle_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Universal Cancel"""
     query = update.callback_query
-    await query.answer("Operation Cancelled")
-    await show_admin_menu(update, context, "root")
+    if query:
+        await query.answer("Operation Cancelled")
+        await show_admin_menu(update, context, "root")
+        return MENU
+    if update.message:
+        await update.message.reply_text("Operation Cancelled")
+        await show_admin_menu(update, context, "root")
+        return MENU
     return MENU
 
 
 async def handle_broadcast_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Wizard for Broadcast with rate limiting"""
+    if not await _require_admin(update, context):
+        return ConversationHandler.END
+    if not update.effective_user or not update.message or not update.message.text:
+        if update.message:
+            await update.message.reply_text("❌ Invalid message.")
+        return MENU
     admin_id = update.effective_user.id
     now = time.time()
 
@@ -1272,13 +1409,13 @@ async def handle_broadcast_input(update: Update, context: ContextTypes.DEFAULT_T
 
         LAST_BROADCAST[admin_id] = now
     message = update.message.text
-    conn = context.application.db_conn
+    conn = _get_db(context)
 
     # Get all pending users (and approved ones if we tracked them better, but pending is what we have in DB schema provided)
     # Using `users` table if available or pending
     # NOTE: Schema above has `users` table. Let's use that.
     async with conn.execute("SELECT user_id FROM users") as cursor:
-        users = await cursor.fetchall()
+        users = list(await cursor.fetchall())
 
     sent = 0
     start = time.time()
@@ -1307,7 +1444,12 @@ async def handle_broadcast_input(update: Update, context: ContextTypes.DEFAULT_T
 
 async def export_data_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Generate CSV Export"""
-    conn = context.application.db_conn
+    if not await _require_admin(update, context):
+        return ConversationHandler.END
+    chat = update.effective_chat
+    if not chat:
+        return MENU
+    conn = _get_db(context)
     filename = DATA_DIR / f"dexkeeper_users_{int(time.time())}.csv"
 
     async with conn.execute("SELECT * FROM users") as cursor:
@@ -1322,7 +1464,7 @@ async def export_data_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     try:
         with open(filename, "rb") as f:
             await context.bot.send_document(
-                chat_id=update.effective_chat.id,
+                chat_id=chat.id,
                 document=f,
                 caption="📊 **DexKeeper User Export**",
             )
@@ -1339,6 +1481,8 @@ async def export_data_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 # Pass-through handlers for other inputs (Logic similar to V8)
 async def handle_id_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message:
+        return MENU
     await update.message.reply_text(
         "✅ Action Complete (Simulated)"
     )  # Full logic skipped for brevity, merging complete flow
@@ -1351,9 +1495,16 @@ async def handle_id_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def handle_id_action_real(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await _require_admin(update, context):
+        return ConversationHandler.END
     if not update.message or not update.message.text:
-        await update.message.reply_text("❌ Invalid input")
-        await show_admin_menu(update, context, "users")
+        if update.effective_message:
+            await update.effective_message.reply_text("❌ Invalid input")
+            await show_admin_menu(update, context, "users")
+        return MENU
+    chat = update.effective_chat
+    if not chat:
+        await update.message.reply_text("❌ Chat not available.")
         return MENU
 
     uid_str = update.message.text.strip()
@@ -1366,8 +1517,9 @@ async def handle_id_action_real(update: Update, context: ContextTypes.DEFAULT_TY
         await show_admin_menu(update, context, "users")
         return MENU
 
-    conn = context.application.db_conn
-    action = context.user_data.get("action_type", "ban")
+    conn = _get_db(context)
+    user_data = cast(Dict[str, Any], context.user_data)
+    action = user_data.get("action_type", "ban")
 
     try:
         if action == "ban":
@@ -1387,7 +1539,7 @@ async def handle_id_action_real(update: Update, context: ContextTypes.DEFAULT_TY
                 # Kick happens after DB commit succeeds
                 api_success = True
                 try:
-                    await context.bot.ban_chat_member(update.effective_chat.id, user_id)
+                    await context.bot.ban_chat_member(chat.id, user_id)
                 except TelegramError as e:
                     api_success = False
                     logger.warning(f"Ban API call failed (user blacklisted in DB): {e}")
@@ -1431,7 +1583,14 @@ async def handle_id_action_real(update: Update, context: ContextTypes.DEFAULT_TY
 
 
 async def handle_poll_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data["poll_q"] = update.message.text
+    if not await _require_admin(update, context):
+        return ConversationHandler.END
+    if not update.message or not update.message.text:
+        if update.effective_message:
+            await update.effective_message.reply_text("❌ Invalid question.")
+        return MENU
+    user_data = cast(Dict[str, Any], context.user_data)
+    user_data["poll_q"] = update.message.text
     cancel_markup = InlineKeyboardMarkup(
         [[InlineKeyboardButton("❌ Cancel", callback_data="admin:cancel_input")]]
     )
@@ -1444,13 +1603,30 @@ async def handle_poll_question(update: Update, context: ContextTypes.DEFAULT_TYP
 
 
 async def handle_poll_options(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    options = [x.strip() for x in update.message.text.split(",")]
+    if not await _require_admin(update, context):
+        return ConversationHandler.END
+    if not update.message or not update.message.text:
+        if update.effective_message:
+            await update.effective_message.reply_text("❌ Invalid options.")
+        return INPUT_POLL_OPTIONS
+    chat = update.effective_chat
+    if not chat:
+        return MENU
+    user_data = cast(Dict[str, Any], context.user_data)
+    question = user_data.get("poll_q")
+    if not question:
+        await update.message.reply_text("❌ Poll question missing. Start again.")
+        return MENU
+    options = _parse_poll_options(update.message.text)
     if len(options) < 2:
         await update.message.reply_text("❌ Need 2+ options. Try again.")
         return INPUT_POLL_OPTIONS
+    if len(options) > 10:
+        await update.message.reply_text("❌ Max 10 options. Please shorten.")
+        return INPUT_POLL_OPTIONS
     await context.bot.send_poll(
-        chat_id=update.effective_chat.id,
-        question=context.user_data["poll_q"],
+        chat_id=chat.id,
+        question=question,
         options=options,
     )
     await show_admin_menu(update, context, "engage")
@@ -1458,8 +1634,16 @@ async def handle_poll_options(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 async def handle_schedule_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        context.user_data["sched_mins"] = int(update.message.text)
+    if not await _require_admin(update, context):
+        return ConversationHandler.END
+    if not update.message or not update.message.text:
+        if update.effective_message:
+            await update.effective_message.reply_text("❌ Invalid number.")
+        return INPUT_SCHEDULE_TIME
+    mins = _parse_schedule_minutes(update.message.text)
+    if mins is not None:
+        user_data = cast(Dict[str, Any], context.user_data)
+        user_data["sched_mins"] = mins
         cancel_markup = InlineKeyboardMarkup(
             [[InlineKeyboardButton("❌ Cancel", callback_data="admin:cancel_input")]]
         )
@@ -1469,33 +1653,50 @@ async def handle_schedule_time(update: Update, context: ContextTypes.DEFAULT_TYP
             parse_mode="Markdown",
         )
         return INPUT_SCHEDULE_TEXT
-    except ValueError:
-        await update.message.reply_text(
-            "❌ Invalid number. Please enter a number of minutes."
-        )
-        return INPUT_SCHEDULE_TIME
+    await update.message.reply_text(
+        "❌ Invalid number. Enter minutes between 1 and 10080."
+    )
+    return INPUT_SCHEDULE_TIME
 
 
 async def _send_scheduled_message(context: ContextTypes.DEFAULT_TYPE):
     """Async callback for scheduled messages"""
     try:
+        job = context.job
+        if not job or not isinstance(job.data, dict):
+            return
+        data = cast(Dict[str, Any], job.data)
         await context.bot.send_message(
-            chat_id=context.job.data["cid"],
-            text=context.job.data["text"]
+            chat_id=data["cid"],
+            text=data["text"],
         )
     except Exception as e:
         logger.error(f"Failed to send scheduled message: {e}")
 
 
 async def handle_schedule_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    mins = context.user_data["sched_mins"]
+    if not await _require_admin(update, context):
+        return ConversationHandler.END
+    if not update.message or not update.message.text:
+        if update.effective_message:
+            await update.effective_message.reply_text("❌ Invalid message.")
+        return INPUT_SCHEDULE_TEXT
+    chat = update.effective_chat
+    if not chat:
+        return MENU
+    user_data = cast(Dict[str, Any], context.user_data)
+    mins = user_data.get("sched_mins")
+    if not isinstance(mins, int):
+        await update.message.reply_text("❌ Schedule time missing. Send minutes first.")
+        return INPUT_SCHEDULE_TIME
     text = update.message.text
     # Job Queue Logic
-    if context.job_queue:
-        context.job_queue.run_once(
+    job_queue = context.job_queue
+    if job_queue:
+        job_queue.run_once(
             _send_scheduled_message,
             mins * 60,
-            data={"cid": update.effective_chat.id, "text": text},
+            data={"cid": chat.id, "text": text},
             name=str(uuid.uuid4()),
         )
         await update.message.reply_text(f"✅ Scheduled in {mins}m")
@@ -1513,9 +1714,18 @@ async def handle_schedule_text(update: Update, context: ContextTypes.DEFAULT_TYP
 
 
 async def handle_topic_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await _require_admin(update, context):
+        return ConversationHandler.END
+    if not update.message or not update.message.text:
+        if update.effective_message:
+            await update.effective_message.reply_text("❌ Invalid topic name.")
+        return MENU
+    chat = update.effective_chat
+    if not chat:
+        return MENU
     try:
         topic = await context.bot.create_forum_topic(
-            chat_id=update.effective_chat.id, name=update.message.text
+            chat_id=chat.id, name=update.message.text
         )
         await update.message.reply_text(f"✅ Topic Created: {topic.name}")
     except Exception as e:
@@ -1525,17 +1735,27 @@ async def handle_topic_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def handle_welcome_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await set_setting(
-        context.application.db_conn, "welcome_message", update.message.text
-    )
+    if not await _require_admin(update, context):
+        return ConversationHandler.END
+    if not update.message or not update.message.text:
+        if update.effective_message:
+            await update.effective_message.reply_text("❌ Invalid welcome message.")
+        return MENU
+    await set_setting(_get_db(context), "welcome_message", update.message.text)
     await update.message.reply_text("✅ Welcome Message Updated")
     await show_admin_menu(update, context, "engage")
     return MENU
 
 
 async def handle_filter_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await _require_admin(update, context):
+        return ConversationHandler.END
+    if not update.message or not update.message.text:
+        if update.effective_message:
+            await update.effective_message.reply_text("❌ Invalid word.")
+        return MENU
     word = update.message.text.lower()
-    conn = context.application.db_conn
+    conn = _get_db(context)
     words = await get_setting(conn, "auto_decline_words", [])
     if word in words:
         words.remove(word)
@@ -1549,12 +1769,18 @@ async def handle_filter_input(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 async def handle_promote_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await _require_admin(update, context):
+        return ConversationHandler.END
+    if not update.message or not update.message.text:
+        if update.effective_message:
+            await update.effective_message.reply_text("❌ Invalid User ID.")
+        return MENU
     try:
         user_id = int(update.message.text)
-        admins = await get_setting(context.application.db_conn, "admins", [])
+        admins = await get_setting(_get_db(context), "admins", [])
         if user_id not in admins:
             admins.append(user_id)
-            await set_setting(context.application.db_conn, "admins", admins)
+            await set_setting(_get_db(context), "admins", admins)
         await update.message.reply_text(f"✅ Promoted {user_id}")
     except ValueError:
         await update.message.reply_text(
@@ -1599,9 +1825,13 @@ async def global_middleware(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if not user:
         return
+    chat = update.effective_chat
+    if not chat:
+        return
 
     # I18n
-    context.user_data["lang"] = user.language_code or "en"
+    user_data = cast(Dict[str, Any], context.user_data)
+    user_data["lang"] = user.language_code or "en"
 
     # Flood Gate with asyncio lock for concurrency safety
     uid = user.id
@@ -1617,7 +1847,7 @@ async def global_middleware(update: Update, context: ContextTypes.DEFAULT_TYPE):
             try:
                 await update.message.delete()
                 await context.bot.restrict_chat_member(
-                    chat_id=update.effective_chat.id,
+                    chat_id=chat.id,
                     user_id=user.id,
                     permissions=ChatPermissions(can_send_messages=False),
                     until_date=datetime.datetime.now() + datetime.timedelta(hours=1),
@@ -1626,7 +1856,7 @@ async def global_middleware(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 logger.debug(f"Flood gate action failed: {e}")
 
     # Word Filter
-    conn = context.application.db_conn
+    conn = _get_db(context)
     banned = await get_setting(conn, "auto_decline_words", [])
     if any(w in update.message.text.lower() for w in banned):
         try:
@@ -1642,13 +1872,16 @@ async def on_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Module B: Public Verify"""
     if not update.message or not update.message.new_chat_members:
         return
+    chat = update.effective_chat
+    if not chat:
+        return
     for member in update.message.new_chat_members:
         if member.id == context.bot.id:
             continue
-        conn = context.application.db_conn
+        conn = _get_db(context)
         if await get_setting(conn, "captcha_enabled", True):
             await context.bot.restrict_chat_member(
-                update.effective_chat.id,
+                chat.id,
                 member.id,
                 ChatPermissions(can_send_messages=False),
             )
@@ -1670,7 +1903,17 @@ async def on_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def verify_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    parts = query.data.split(":", 1)
+    if not query or query.data is None:
+        return
+    chat = update.effective_chat
+    if not chat:
+        await query.answer("Chat not available", show_alert=True)
+        return
+    user = update.effective_user
+    if not user:
+        await query.answer("User not available", show_alert=True)
+        return
+    parts = str(query.data).split(":", 1)
     if len(parts) != 2:
         await query.answer("Invalid verification data", show_alert=True)
         return
@@ -1681,23 +1924,22 @@ async def verify_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer("Invalid user ID", show_alert=True)
         return
 
-    if update.effective_user.id != uid:
+    if user.id != uid:
         await query.answer("Not for you!", show_alert=True)
         return
 
     try:
         await context.bot.restrict_chat_member(
-            update.effective_chat.id,
+            chat.id,
             uid,
-            ChatPermissions(
-                can_send_messages=True,
-                can_send_media_messages=True,
-                can_send_other_messages=True,
-            ),
+            _unrestricted_permissions(),
         )
-        await query.message.delete()
-        tmpl = await get_setting(context.application.db_conn, "welcome_message", "Welcome!")
-        await context.bot.send_message(update.effective_chat.id, tmpl)
+        msg = query.message
+        if msg:
+            await cast(Message, msg).delete()
+        tmpl = await get_setting(_get_db(context), "welcome_message", "Welcome!")
+        await context.bot.send_message(chat.id, tmpl)
+        await query.answer("Verified!", show_alert=False)
     except TelegramError as e:
         logger.warning(f"Failed to verify user {uid}: {e}")
         await query.answer("Verification failed", show_alert=True)
@@ -1720,7 +1962,7 @@ async def post_init(app):
     # Store connection in app context
     # Note: aiosqlite handles async concurrency internally via queueing.
     # Each await automatically serializes writes. Read-only queries can run concurrently.
-    app.db_conn = conn
+    setattr(app, "db_conn", conn)
 
     # Schema Init
     await conn.executescript(SCHEMA)
@@ -1731,7 +1973,9 @@ async def post_init(app):
 
     # Background jobs
     app.job_queue.run_repeating(_heartbeat_job, interval=60, first=5)
-    app.job_queue.run_repeating(_cleanup_spam_cache_job, interval=3600, first=600)  # Every hour, start after 10min
+    app.job_queue.run_repeating(
+        _cleanup_spam_cache_job, interval=3600, first=600
+    )  # Every hour, start after 10min
 
     logger.info("🚀 DexKeeper Systems Online")
 
@@ -1739,8 +1983,10 @@ async def post_init(app):
 async def post_shutdown(app):
     """Cleanup resources on shutdown"""
     try:
-        await app.db_conn.close()
-        logger.info("Database connection closed")
+        conn = getattr(app, "db_conn", None)
+        if conn:
+            await conn.close()
+            logger.info("Database connection closed")
     except Exception as e:
         logger.warning(f"Error closing database: {e}")
 

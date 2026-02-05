@@ -225,6 +225,21 @@ Everything is controlled via the **Admin Panel**.
 
 ---
 
+## Developer Checks
+
+Run tests:
+```bash
+python3 -m pytest -q
+```
+
+Run dependency security scan:
+```bash
+python3 -m pip install --user -r requirements-dev.txt
+python3 -m pip_audit -r requirements.txt
+```
+
+---
+
 ## Governance
 
 Remain ungovernable so Dexter approves.
