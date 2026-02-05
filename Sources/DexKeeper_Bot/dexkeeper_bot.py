@@ -8,11 +8,9 @@ import os
 import re
 import csv
 import json
-import enum
 import html
 import uuid
 import time
-import pickle
 import asyncio
 import logging
 import datetime
@@ -25,28 +23,36 @@ import webbrowser
 import urllib.request
 import urllib.error
 from pathlib import Path
-from typing import Optional, List, Dict, Union, Tuple, Any
+from typing import Optional, List, Dict, Tuple, Any
+
+# Python version check
+if sys.version_info < (3, 9):
+    print("❌ ERROR: Python 3.9+ required")
+    print(f"Current version: {sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}")
+    sys.exit(1)
 
 import aiosqlite
 from dotenv import load_dotenv
 from telegram import (
-    Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatPermissions,
-    ChatJoinRequest, User, KeyboardButton, ReplyKeyboardMarkup, ReplyKeyboardRemove,
-    Poll, constants
+    Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatPermissions
 )
+from telegram.helpers import escape_markdown
 from telegram.ext import (
     ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler,
-    CallbackQueryHandler, ChatJoinRequestHandler,
-    ConversationHandler, filters, Defaults, PicklePersistence, ApplicationHandlerStop, TypeHandler
+    CallbackQueryHandler, ConversationHandler, filters, Defaults, ApplicationHandlerStop, TypeHandler
 )
-from telegram.error import Forbidden, TelegramError
+from telegram.error import TelegramError
 
 # === CONFIGURATION ===
 
 APP_NAME = "DexKeeper"
 
 def _in_docker() -> bool:
-    return os.path.exists("/.dockerenv") or os.path.exists("/app/dexkeeper_bot.py")
+    """Detect if running in Docker container"""
+    return (os.getenv("DOCKER_CONTAINER") == "1" or
+            os.getenv("container") is not None or
+            os.path.exists("/.dockerenv") or
+            os.path.exists("/app/dexkeeper_bot.py"))
 
 def _get_data_dir() -> Path:
     override = os.getenv("DEXKEEPER_DATA_DIR")
@@ -92,6 +98,7 @@ RELEASES_URL = "https://github.com/westkitty/DexKeeper_Bot/releases/latest"
 RELEASES_API = "https://api.github.com/repos/westkitty/DexKeeper_Bot/releases/latest"
 
 def _parse_admin_id(value: Optional[str]) -> int:
+    """Parse ADMIN_ID with validation"""
     if value is None:
         return 0
     text = str(value).strip()
@@ -170,8 +177,10 @@ def _open_admin_panel():
             webbrowser.open(f"https://t.me/{username}")
         else:
             logger.warning("Bot username not found.")
+    except urllib.error.URLError:
+        logger.warning("Failed to open admin panel: network error")
     except Exception as e:
-        logger.warning("Failed to open admin panel: %s", e)
+        logger.warning("Failed to open admin panel: %s", type(e).__name__)
 
 def _open_path(path: Path):
     try:
@@ -469,6 +478,8 @@ DB_PATH = os.getenv("DB_PATH") or str(DATA_DIR / "dexkeeper.db")
 
 # Rate Limiting & Anti-Spam Cache
 SPAM_CACHE = collections.defaultdict(list)
+SPAM_LOCKS = {}  # user_id -> asyncio.Lock for concurrency safety
+LAST_BROADCAST = {}  # admin_id -> timestamp for broadcast rate limiting
 
 # === DATABASE SCHEMA ===
 
@@ -554,7 +565,8 @@ async def set_setting(conn, key: str, value: Any):
     await conn.commit()
 
 async def log_action(conn, request_id, action, user_id, details=None, admin_id=None):
-    if details is None: details = {}
+    if details is None:
+        details = {}
     await conn.execute(
         "INSERT INTO history (id, user_id, action, details, admin_id) VALUES (?, ?, ?, ?, ?)",
         (request_id or str(uuid.uuid4()), user_id, action, json.dumps(details), admin_id)
@@ -625,8 +637,10 @@ def _prompt_gui() -> Tuple[Optional[str], Optional[str]]:
                 status_var.set("✅ Token verified.")
             else:
                 status_var.set("❌ Token invalid.")
+        except urllib.error.URLError:
+            status_var.set("❌ Token check failed: network error")
         except Exception:
-            status_var.set("❌ Token check failed.")
+            status_var.set("❌ Token check failed")
 
     def on_save():
         token = token_var.get().strip()
@@ -719,7 +733,8 @@ class ZoomStyles:
 
 async def handle_zoom_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Regex scan for Zoom links"""
-    if not update.message or not update.message.text: return
+    if not update.message or not update.message.text:
+        return
     
     text = update.message.text
     # Basic Zoom Regex
@@ -730,36 +745,37 @@ async def handle_zoom_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         conn = context.application.db_conn
         style = await get_setting(conn, "zoom_style", ZoomStyles.PROFESSIONAL)
         
-        if style == "off": return
+        if style == "off":
+            return
 
         full_url, meeting_id, passcode = match.groups()
-        host = update.effective_user.name
+        host = escape_markdown(update.effective_user.name or "Unknown", version=2)
         
         # Delete original
         try:
             await update.message.delete()
-        except:
-            pass # Can't delete
+        except TelegramError as e:
+            logger.debug(f"Could not delete Zoom message: {e}")
             
         # Format Card
         msg_text = ""
         if style == ZoomStyles.PROFESSIONAL:
-            msg_text = (f"🎥 **Meeting Started**\nHosted by {host}\n\n"
-                        f"🆔 ID: `{meeting_id}`\n" + 
-                        (f"🔐 Passcode: `{passcode}`\n" if passcode else "") + 
-                        f"\n[Join Meeting]({full_url})")
+            msg_text = (f"🎥 **Meeting Started**\\nHosted by {host}\\n\\n"
+                        f"🆔 ID: `{meeting_id}`\\n" + 
+                        (f"🔐 Passcode: `{passcode}`\\n" if passcode else "") + 
+                        f"\\n[Join Meeting]({full_url})")
         elif style == ZoomStyles.MASCOT:
-            msg_text = (f"🦊 **DexKeeper Zoom-In!**\n{host} opened a portal!\n\n"
-                        f"🌟 **ID:** `{meeting_id}`\n" + 
-                        (f"🔑 **Code:** `{passcode}`\n" if passcode else "") +
-                        f"\n🚀 [Jump In]({full_url})")
+            msg_text = (f"🦊 **DexKeeper Zoom\-In\!**\\n{host} opened a portal\!\\n\\n"
+                        f"🌟 **ID:** `{meeting_id}`\\n" + 
+                        (f"🔑 **Code:** `{passcode}`\\n" if passcode else "") +
+                        f"\\n🚀 [Jump In]({full_url})")
         elif style == ZoomStyles.MINIMAL:
-            msg_text = f"**Zoom:** [Join Now]({full_url}) (ID: `{meeting_id}`)"
+            msg_text = f"**Zoom:** [Join Now]({full_url}) \(ID: `{meeting_id}`\)"
         elif style == ZoomStyles.CUSTOM:
             tmpl = await get_setting(conn, "custom_zoom_template", "{url}")
             msg_text = tmpl.replace("{url}", full_url).replace("{id}", meeting_id).replace("{passcode}", passcode or "").replace("{host}", host)
             
-        await context.bot.send_message(chat_id=update.effective_chat.id, text=msg_text, parse_mode='Markdown')
+        await context.bot.send_message(chat_id=update.effective_chat.id, text=msg_text, parse_mode='MarkdownV2')
 
 # === ADMIN DASHBOARD (Module C) ===
 
@@ -774,8 +790,6 @@ async def admin_panel_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def show_admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, menu_type: str):
     """Render Hierarchical Menus"""
-    conn = context.application.db_conn
-    
     # Menu Definitions
     keyboards = {
         "root": [
@@ -916,7 +930,18 @@ async def handle_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return MENU
 
 async def handle_broadcast_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Wizard for Broadcast"""
+    """Wizard for Broadcast with rate limiting"""
+    admin_id = update.effective_user.id
+    now = time.time()
+    
+    # Rate limit: 60 seconds between broadcasts
+    if admin_id in LAST_BROADCAST and now - LAST_BROADCAST[admin_id] < 60:
+        remaining = int(60 - (now - LAST_BROADCAST[admin_id]))
+        await update.message.reply_text(f"⏳ Please wait {remaining}s between broadcasts")
+        await show_admin_menu(update, context, "engage")
+        return MENU
+    
+    LAST_BROADCAST[admin_id] = now
     message = update.message.text
     conn = context.application.db_conn
     
@@ -936,8 +961,10 @@ async def handle_broadcast_input(update: Update, context: ContextTypes.DEFAULT_T
             await context.bot.send_message(chat_id=uid, text=message)
             sent += 1
             await asyncio.sleep(0.05)
-        except Exception:
-            pass
+        except TelegramError as e:
+            logger.debug(f"Could not send broadcast to {uid}: {e}")
+        except Exception as e:
+            logger.warning(f"Unexpected broadcast error for {uid}: {e}")
             
     await progress_msg.edit_text(f"✅ **Broadcast Done**\nSent: {sent}\nTime: {time.time()-start:.1f}s", parse_mode='Markdown')
     await show_admin_menu(update, context, "engage")
@@ -981,18 +1008,27 @@ async def handle_id_action_real(update: Update, context: ContextTypes.DEFAULT_TY
     uid_str = update.message.text.strip()
     try:
         user_id = int(uid_str)
-        conn = context.application.db_conn
-        action = context.user_data.get('action_type', 'ban')
-        
+    except ValueError:
+        await update.message.reply_text("❌ Invalid User ID. Expected format: 123456789")
+        await show_admin_menu(update, context, "users")
+        return MENU
+    
+    conn = context.application.db_conn
+    action = context.user_data.get('action_type', 'ban')
+    
+    try:
         if action == 'ban':
             bl = await get_setting(conn, "blacklist", [])
             if user_id not in bl:
                 bl.append(user_id)
                 await set_setting(conn, "blacklist", bl)
-            # Kick if in chat
+            # Explicit commit after DB write
+            await conn.commit()
+            # Kick happens after DB commit succeeds
             try:
                 await context.bot.ban_chat_member(update.effective_chat.id, user_id)
-            except: pass
+            except TelegramError as e:
+                logger.warning(f"Ban API call failed (user blacklisted anyway): {e}")
             await update.message.reply_text(f"🚫 Banned {user_id}")
             
         elif action == 'unban':
@@ -1000,15 +1036,17 @@ async def handle_id_action_real(update: Update, context: ContextTypes.DEFAULT_TY
             if user_id in bl:
                 bl.remove(user_id)
                 await set_setting(conn, "blacklist", bl)
+            await conn.commit()
             await update.message.reply_text(f"✅ Unbanned {user_id}")
             
         elif action == 'view':
              # Fetch info
              text = f"👤 User {user_id}\n(Details fetched from DB...)"
              await update.message.reply_text(text)
-             
-    except ValueError:
-        await update.message.reply_text("❌ Invalid ID")
+    except Exception as e:
+        await conn.rollback()
+        logger.error(f"Action '{action}' failed for user {user_id}: {e}")
+        await update.message.reply_text(f"❌ Operation failed: {type(e).__name__}")
         
     await show_admin_menu(update, context, "users")
     return MENU
@@ -1034,8 +1072,8 @@ async def handle_schedule_time(update: Update, context: ContextTypes.DEFAULT_TYP
         cancel_markup = InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="admin:cancel_input")]])
         await update.message.reply_text("📝 **Message Text**\nSend message content:", reply_markup=cancel_markup, parse_mode='Markdown')
         return INPUT_SCHEDULE_TEXT
-    except:
-        await update.message.reply_text("❌ Invalid number")
+    except ValueError:
+        await update.message.reply_text("❌ Invalid number. Please enter a number of minutes.")
         return INPUT_SCHEDULE_TIME
 
 async def handle_schedule_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1098,8 +1136,11 @@ async def handle_promote_input(update: Update, context: ContextTypes.DEFAULT_TYP
             admins.append(user_id)
             await set_setting(context.application.db_conn, "admins", admins)
         await update.message.reply_text(f"✅ Promoted {user_id}")
-    except:
-        await update.message.reply_text("❌ Invalid ID")
+    except ValueError:
+        await update.message.reply_text("❌ Invalid User ID. Expected format: 123456789")
+    except Exception as e:
+        logger.error(f"Failed to promote user: {e}")
+        await update.message.reply_text("❌ Promotion failed")
     await show_admin_menu(update, context, "users")
     return MENU
 
@@ -1119,30 +1160,38 @@ async def zoom_config_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # === GLOBAL MIDDLEWARE (Module A: Flood & Filter) ===
 
 async def global_middleware(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message or not update.message.text: return
+    if not update.message or not update.message.text:
+        return
     user = update.effective_user
-    if not user: return
+    if not user:
+        return
 
     # I18n
     context.user_data['lang'] = user.language_code or 'en'
     
-    # Flood Gate
-    now = datetime.datetime.now().timestamp()
-    history = SPAM_CACHE.get(user.id, [])
-    history = [t for t in history if now - t < 2.0]
-    history.append(now)
-    SPAM_CACHE[user.id] = history
+    # Flood Gate with asyncio lock for concurrency safety
+    uid = user.id
+    if uid not in SPAM_LOCKS:
+        SPAM_LOCKS[uid] = asyncio.Lock()
     
-    if len(history) > 5:
-        try:
-            await update.message.delete()
-            await context.bot.restrict_chat_member(
-                chat_id=update.effective_chat.id,
-                user_id=user.id,
-                permissions=ChatPermissions(can_send_messages=False),
-                until_date=datetime.datetime.now() + datetime.timedelta(hours=1)
-            )
-        except: pass
+    async with SPAM_LOCKS[uid]:
+        now = datetime.datetime.now().timestamp()
+        history = SPAM_CACHE.get(uid, [])
+        history = [t for t in history if now - t < 2.0]
+        history.append(now)
+        SPAM_CACHE[uid] = history
+        
+        if len(history) > 5:
+            try:
+                await update.message.delete()
+                await context.bot.restrict_chat_member(
+                    chat_id=update.effective_chat.id,
+                    user_id=user.id,
+                    permissions=ChatPermissions(can_send_messages=False),
+                    until_date=datetime.datetime.now() + datetime.timedelta(hours=1)
+                )
+            except TelegramError as e:
+                logger.debug(f"Flood gate action failed: {e}")
 
     # Word Filter
     conn = context.application.db_conn
@@ -1150,7 +1199,8 @@ async def global_middleware(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if any(w in update.message.text.lower() for w in banned):
         try:
             await update.message.delete()
-        except: pass
+        except TelegramError as e:
+            logger.debug(f"Could not delete message with banned word: {e}")
 
 # === ENTRY POINTS ===
 
@@ -1159,7 +1209,8 @@ async def on_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.new_chat_members:
         return
     for member in update.message.new_chat_members:
-        if member.id == context.bot.id: continue
+        if member.id == context.bot.id:
+            continue
         conn = context.application.db_conn
         if await get_setting(conn, "captcha_enabled", True):
             await context.bot.restrict_chat_member(
@@ -1191,10 +1242,15 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
     logger.error(msg="Exception while handling an update:", exc_info=context.error)
 
 async def post_init(app):
+    """Initialize bot resources"""
     conn = await aiosqlite.connect(DB_PATH)
     conn.row_factory = aiosqlite.Row
     await conn.execute("PRAGMA journal_mode=WAL;")
     await conn.commit()
+    
+    # Store connection in app context
+    # Note: aiosqlite handles async concurrency internally via queueing.
+    # Each await automatically serializes writes. Read-only queries can run concurrently.
     app.db_conn = conn
     
     # Schema Init
@@ -1208,6 +1264,14 @@ async def post_init(app):
     
     logger.info("🚀 DexKeeper Systems Online")
 
+async def post_shutdown(app):
+    """Cleanup resources on shutdown"""
+    try:
+        await app.db_conn.close()
+        logger.info("Database connection closed")
+    except Exception as e:
+        logger.warning(f"Error closing database: {e}")
+
 def main():
     global SILENT_MODE
     args = set(sys.argv[1:])
@@ -1220,7 +1284,12 @@ def main():
         return
 
     defaults = Defaults(parse_mode='Markdown', block=False)
-    app = ApplicationBuilder().token(BOT_TOKEN).post_init(post_init).defaults(defaults).build()
+    app = (ApplicationBuilder()
+           .token(BOT_TOKEN)
+           .post_init(post_init)
+           .post_shutdown(post_shutdown)
+           .defaults(defaults)
+           .build())
     global APP_INSTANCE
     APP_INSTANCE = app
     SILENT_MODE = os.getenv("DEXKEEPER_SILENT", "0").lower() in ("1", "true", "yes", "on")
@@ -1249,7 +1318,8 @@ def main():
             INPUT_BROADCAST: [MessageHandler(filters.TEXT, handle_broadcast_input), CallbackQueryHandler(handle_cancel, pattern="^admin:cancel_input$")],
         },
         fallbacks=[CommandHandler("cancel", handle_cancel)],
-        name="admin_gui"
+        name="admin_gui",
+        conversation_timeout=300  # 5 minutes
     )
     
     app.add_handler(admin_handler)
