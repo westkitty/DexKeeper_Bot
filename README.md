@@ -77,6 +77,19 @@ You need to tell Telegram "I am making a bot" and get a key to control it.
 2. Extract the ZIP file.
 3. Continue to "Configure the Bot" below.
 
+### Option A2: Windows One‑Click Installer (Unsigned)
+
+If you're on Windows, you can install DexKeeper with a one‑click unsigned installer (SmartScreen will warn because it is unsigned).
+
+1. Go to **Releases** and download `DexKeeper-Setup.exe`.
+2. Run the installer and follow the minimal prompts.
+3. On first run, a small window will ask for your `BOT_TOKEN` and optional `ADMIN_ID`.
+4. DexKeeper will store its config and data in `%APPDATA%\DexKeeper`.
+
+Notes:
+- If you want the portable build instead, download `DexKeeper.exe` from the release assets.
+- To auto‑build Windows releases from Git tags, create a tag like `v0.1.1` and push it. GitHub Actions will build and attach the installer.
+
 ### Option B: Clone from Source
 
 We use **Docker** to make this easy. If you don't know what Docker is, think of it as a "program player". We give you the cartridge (this code), and Docker plays it exactly the same on every computer.
