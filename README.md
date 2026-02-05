@@ -73,52 +73,49 @@ You need to tell Telegram "I am making a bot" and get a key to control it.
 
 ## 💻 Phase 2: Installation Guide
 
-### Option A: Download Pre-Built Release (Easiest)
+### ✅ Option A: One‑Click Installers (Easiest)
+
+These are the fastest, recommended installs. No command line required.
+
+**Windows (Easiest)**
+1. Download **[DexKeeper-Setup.exe](https://github.com/westkitty/DexKeeper_Bot/releases/latest/download/DexKeeper-Setup.exe)**.
+2. Run it. If SmartScreen appears, click **More info → Run anyway**.
+3. A setup window asks for `BOT_TOKEN` and optional `ADMIN_ID`.
+4. DexKeeper stores data in `%APPDATA%\DexKeeper`.
+
+**macOS (Easiest)**
+1. Download **[DexKeeper.dmg](https://github.com/westkitty/DexKeeper_Bot/releases/latest/download/DexKeeper.dmg)**.
+2. Open the DMG and drag **DexKeeper.app** to Applications.
+3. On first run, macOS may block it. Go to **System Settings → Privacy & Security** and allow it.
+4. DexKeeper stores data in `~/Library/Application Support/DexKeeper`.
+
+**Linux (Easiest)**
+1. Download **[DexKeeper.AppImage](https://github.com/westkitty/DexKeeper_Bot/releases/latest/download/DexKeeper.AppImage)**.
+2. Run:
+   ```bash
+   chmod +x DexKeeper.AppImage
+   ./DexKeeper.AppImage
+   ```
+3. DexKeeper stores data in `~/.local/share/DexKeeper` (or `$XDG_DATA_HOME/DexKeeper`).
+
+Notes:
+- Linux may require `libfuse2` for AppImage support.
+- All installers prompt for your bot token on first run.
+
+### ✅ Option B: Portable Windows EXE (Easy)
+
+If you prefer no installer on Windows:
+1. Download **[DexKeeper.exe](https://github.com/westkitty/DexKeeper_Bot/releases/latest/download/DexKeeper.exe)**.
+2. Double‑click to run. First run prompts for `BOT_TOKEN`.
+3. Data is stored in `%APPDATA%\DexKeeper`.
+
+### ✅ Option C: Source ZIP + Docker (Easy, Not Easiest)
 
 **[📥 Download the latest release (.zip)](https://github.com/westkitty/DexKeeper_Bot/releases/latest)**
 
 1. Download `DexKeeper_Bot_v0.1.0.zip` from **[Releases](https://github.com/westkitty/DexKeeper_Bot/releases/latest)**.
 2. Extract the ZIP file.
 3. Continue to "Configure the Bot" below.
-
-### Option A2: Windows One‑Click Installer (Unsigned)
-
-If you're on Windows, you can install DexKeeper with a one‑click unsigned installer (SmartScreen will warn because it is unsigned).
-
-1. Go to **[Releases](https://github.com/westkitty/DexKeeper_Bot/releases/latest)** and download **[DexKeeper-Setup.exe](https://github.com/westkitty/DexKeeper_Bot/releases/latest/download/DexKeeper-Setup.exe)**.
-2. Run the installer and follow the minimal prompts.
-3. On first run, a small window will ask for your `BOT_TOKEN` and optional `ADMIN_ID`.
-4. DexKeeper will store its config and data in `%APPDATA%\DexKeeper`.
-
-Notes:
-- If you want the portable build instead, download **[DexKeeper.exe](https://github.com/westkitty/DexKeeper_Bot/releases/latest/download/DexKeeper.exe)**.
-- To auto‑build Windows releases from Git tags, create a tag like `v0.1.1` and push it. **[GitHub Actions](https://github.com/westkitty/DexKeeper_Bot/actions)** will build and attach the installer.
-
-### Option A3: macOS One‑Click Installer (Unsigned)
-
-1. Go to **[Releases](https://github.com/westkitty/DexKeeper_Bot/releases/latest)** and download **[DexKeeper.dmg](https://github.com/westkitty/DexKeeper_Bot/releases/latest/download/DexKeeper.dmg)**.
-2. Open the DMG and drag `DexKeeper.app` into Applications.
-3. On first run, a small window will ask for your `BOT_TOKEN` and optional `ADMIN_ID`.
-4. DexKeeper will store its config and data in `~/Library/Application Support/DexKeeper`.
-
-Notes:
-- macOS will show a Gatekeeper warning because the app is unsigned. You can allow it via System Settings → Privacy & Security.
-- To auto‑build macOS releases from Git tags, create a tag like `v0.1.1` and push it. **[GitHub Actions](https://github.com/westkitty/DexKeeper_Bot/actions)** will build and attach the DMG.
-
-### Option A4: Linux One‑Click AppImage (Unsigned)
-
-1. Go to **[Releases](https://github.com/westkitty/DexKeeper_Bot/releases/latest)** and download **[DexKeeper.AppImage](https://github.com/westkitty/DexKeeper_Bot/releases/latest/download/DexKeeper.AppImage)**.
-2. Make it executable and run:
-   ```bash
-   chmod +x DexKeeper.AppImage
-   ./DexKeeper.AppImage
-   ```
-3. On first run, a small window will ask for your `BOT_TOKEN` and optional `ADMIN_ID`.
-4. DexKeeper will store its config and data in `~/.local/share/DexKeeper` (or `$XDG_DATA_HOME/DexKeeper`).
-
-Notes:
-- Some distros require `libfuse2` to run AppImages.
-- To auto‑build Linux releases from Git tags, create a tag like `v0.1.1` and push it. **[GitHub Actions](https://github.com/westkitty/DexKeeper_Bot/actions)** will build and attach the AppImage.
 
 ### Option B: Clone from Source
 
