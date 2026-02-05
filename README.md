@@ -85,6 +85,7 @@ These are the fastest, recommended installs. No command line required.
 
 **macOS (Easiest)**
 1. Download **[DexKeeper.dmg](https://github.com/westkitty/DexKeeper_Bot/releases/latest/download/DexKeeper.dmg)**.
+2. If the DMG is blocked or unavailable, download **[DexKeeper-macos.zip](https://github.com/westkitty/DexKeeper_Bot/releases/latest/download/DexKeeper-macos.zip)** instead.
 2. Open the DMG and drag **DexKeeper.app** to Applications.
 3. On first run, macOS may block it. Go to **System Settings → Privacy & Security** and allow it.
 4. DexKeeper stores data in `~/Library/Application Support/DexKeeper`.
@@ -126,7 +127,7 @@ If you prefer no installer on Windows:
 
 **[📥 Download the latest release (.zip)](https://github.com/westkitty/DexKeeper_Bot/releases/latest)**
 
-1. Download `DexKeeper_Bot_v0.1.0.zip` from **[Releases](https://github.com/westkitty/DexKeeper_Bot/releases/latest)**.
+1. Download **Source code (zip)** from **[Releases](https://github.com/westkitty/DexKeeper_Bot/releases/latest)**.
 2. Extract the ZIP file.
 3. Continue to "Configure the Bot" below.
 
