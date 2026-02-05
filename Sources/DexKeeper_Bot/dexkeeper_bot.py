@@ -19,6 +19,7 @@ import datetime
 import functools
 import collections
 import sys
+import threading
 from pathlib import Path
 from typing import Optional, List, Dict, Union, Tuple, Any
 
@@ -73,6 +74,71 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger("DexKeeper")
+
+APP_INSTANCE = None
+TRAY_ICON = None
+
+def _resource_path(rel_path: str) -> Path:
+    base = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[2]))
+    return base / rel_path
+
+def _tray_enabled() -> bool:
+    if os.getenv("DEXKEEPER_TRAY", "1").lower() in ("0", "false", "no", "off"):
+        return False
+    if _in_docker():
+        return False
+    if sys.platform.startswith("linux") and not os.getenv("DISPLAY"):
+        return False
+    return True
+
+def _request_stop():
+    logger.info("Stopping DexKeeper...")
+    global TRAY_ICON
+    if TRAY_ICON:
+        try:
+            TRAY_ICON.stop()
+        except Exception:
+            pass
+    app = APP_INSTANCE
+    if app and hasattr(app, "stop_running"):
+        try:
+            app.stop_running()
+            return
+        except Exception:
+            pass
+    os._exit(0)
+
+def start_tray(app):
+    global TRAY_ICON
+    if not _tray_enabled():
+        return
+    try:
+        import pystray
+        from PIL import Image
+    except Exception as e:
+        logger.warning("Tray icon disabled: %s", e)
+        return
+
+    icon_path = _resource_path("assets/DexKeeper_Bot_icon.png")
+    try:
+        image = Image.open(icon_path)
+    except Exception as e:
+        logger.warning("Tray icon image missing: %s", e)
+        return
+
+    menu = pystray.Menu(
+        pystray.MenuItem("Stop DexKeeper", lambda icon, item: _request_stop())
+    )
+    TRAY_ICON = pystray.Icon("DexKeeper", image, "DexKeeper", menu)
+
+    def run_icon():
+        try:
+            TRAY_ICON.run()
+        except Exception as e:
+            logger.warning("Tray icon failed: %s", e)
+
+    t = threading.Thread(target=run_icon, daemon=True)
+    t.start()
 
 def _load_env():
     load_dotenv(dotenv_path=ENV_PATH, override=False)
@@ -792,6 +858,9 @@ def main():
 
     defaults = Defaults(parse_mode='Markdown', block=False)
     app = ApplicationBuilder().token(BOT_TOKEN).post_init(post_init).defaults(defaults).build()
+    global APP_INSTANCE
+    APP_INSTANCE = app
+    start_tray(app)
     
     # Admin System
     admin_handler = ConversationHandler(

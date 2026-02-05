@@ -101,6 +101,7 @@ These are the fastest, recommended installs. No command line required.
 Notes:
 - Linux may require `libfuse2` for AppImage support.
 - All installers prompt for your bot token on first run.
+- A tray icon appears while DexKeeper is running; right-click it to **Stop DexKeeper**.
 
 ### ✅ Option B: Portable Windows EXE (Easy)
 
@@ -108,6 +109,7 @@ If you prefer no installer on Windows:
 1. Download **[DexKeeper.exe](https://github.com/westkitty/DexKeeper_Bot/releases/latest/download/DexKeeper.exe)**.
 2. Double‑click to run. First run prompts for `BOT_TOKEN`.
 3. Data is stored in `%APPDATA%\DexKeeper`.
+4. A tray icon appears while DexKeeper is running; right-click it to **Stop DexKeeper**.
 
 ### ✅ Option C: Source ZIP + Docker (Easy, Not Easiest)
 
@@ -117,7 +119,7 @@ If you prefer no installer on Windows:
 2. Extract the ZIP file.
 3. Continue to "Configure the Bot" below.
 
-### Option B: Clone from Source
+### Option D: Clone from Source (Advanced)
 
 We use **Docker** to make this easy. If you don't know what Docker is, think of it as a "program player". We give you the cartridge (this code), and Docker plays it exactly the same on every computer.
 
