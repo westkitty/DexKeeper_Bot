@@ -20,6 +20,10 @@ import functools
 import collections
 import sys
 import threading
+import subprocess
+import webbrowser
+import urllib.request
+import urllib.error
 from pathlib import Path
 from typing import Optional, List, Dict, Union, Tuple, Any
 
@@ -77,6 +81,10 @@ logger = logging.getLogger("DexKeeper")
 
 APP_INSTANCE = None
 TRAY_ICON = None
+LAST_UPDATE_NOTICE = None
+
+RELEASES_URL = "https://github.com/westkitty/DexKeeper_Bot/releases/latest"
+RELEASES_API = "https://api.github.com/repos/westkitty/DexKeeper_Bot/releases/latest"
 
 def _resource_path(rel_path: str) -> Path:
     base = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[2]))
@@ -108,6 +116,97 @@ def _request_stop():
             pass
     os._exit(0)
 
+def _open_path(path: Path):
+    try:
+        if sys.platform.startswith("win"):
+            os.startfile(str(path))
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", str(path)])
+        else:
+            subprocess.Popen(["xdg-open", str(path)])
+    except Exception as e:
+        logger.warning("Failed to open path %s: %s", path, e)
+
+def _hide_tray():
+    global TRAY_ICON
+    if TRAY_ICON:
+        try:
+            TRAY_ICON.visible = False
+        except Exception:
+            try:
+                TRAY_ICON.stop()
+            except Exception:
+                pass
+
+def _get_current_version() -> str:
+    try:
+        return _resource_path("VERSION").read_text(encoding="utf-8").strip()
+    except Exception:
+        return "0.0.0"
+
+def _parse_version(v: str) -> Tuple[int, ...]:
+    v = v.strip()
+    if v.startswith("v"):
+        v = v[1:]
+    parts = []
+    for chunk in v.split("."):
+        num = ""
+        for ch in chunk:
+            if ch.isdigit():
+                num += ch
+            else:
+                break
+        parts.append(int(num or 0))
+    return tuple(parts)
+
+def _check_for_updates() -> Optional[Dict[str, str]]:
+    try:
+        with urllib.request.urlopen(RELEASES_API, timeout=5) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        latest_tag = data.get("tag_name", "")
+        if not latest_tag:
+            return None
+        current = _parse_version(_get_current_version())
+        latest = _parse_version(latest_tag)
+        if latest > current:
+            return {"tag": latest_tag, "url": RELEASES_URL}
+    except Exception as e:
+        logger.debug("Update check failed: %s", e)
+    return None
+
+def _notify_update():
+    global LAST_UPDATE_NOTICE
+    if os.getenv("DEXKEEPER_AUTO_UPDATE", "1").lower() in ("0", "false", "no", "off"):
+        return
+    info = _check_for_updates()
+    if not info:
+        return
+    tag = info["tag"]
+    if LAST_UPDATE_NOTICE == tag:
+        return
+    LAST_UPDATE_NOTICE = tag
+    msg = f"Update available: {tag}"
+    logger.info(msg)
+    if TRAY_ICON and hasattr(TRAY_ICON, "notify"):
+        try:
+            TRAY_ICON.notify(msg, "DexKeeper")
+        except Exception:
+            pass
+    try:
+        import tkinter as tk
+        from tkinter import messagebox
+        root = tk.Tk()
+        root.withdraw()
+        if messagebox.askyesno("DexKeeper Update", f"{msg}. Open download page?"):
+            webbrowser.open(RELEASES_URL)
+        root.destroy()
+    except Exception:
+        pass
+
+def start_update_check():
+    t = threading.Thread(target=_notify_update, daemon=True)
+    t.start()
+
 def start_tray(app):
     global TRAY_ICON
     if not _tray_enabled():
@@ -127,6 +226,11 @@ def start_tray(app):
         return
 
     menu = pystray.Menu(
+        pystray.MenuItem("Open Data Folder", lambda icon, item: _open_path(DATA_DIR)),
+        pystray.MenuItem("Open Logs", lambda icon, item: _open_path(LOG_PATH)),
+        pystray.MenuItem("Check for Updates", lambda icon, item: webbrowser.open(RELEASES_URL)),
+        pystray.MenuItem("Hide Tray Icon", lambda icon, item: _hide_tray()),
+        pystray.Menu.SEPARATOR,
         pystray.MenuItem("Stop DexKeeper", lambda icon, item: _request_stop())
     )
     TRAY_ICON = pystray.Icon("DexKeeper", image, "DexKeeper", menu)
@@ -275,13 +379,32 @@ def _prompt_gui() -> Tuple[Optional[str], Optional[str]]:
 
     token_var = tk.StringVar()
     admin_var = tk.StringVar()
+    status_var = tk.StringVar()
+    status_var.set("Enter your Telegram BOT_TOKEN.")
 
     tk.Label(root, text="Telegram BOT_TOKEN (required):").grid(row=0, column=0, sticky="w", padx=10, pady=6)
     tk.Entry(root, textvariable=token_var, width=50).grid(row=1, column=0, padx=10)
     tk.Label(root, text="ADMIN_ID (optional):").grid(row=2, column=0, sticky="w", padx=10, pady=6)
     tk.Entry(root, textvariable=admin_var, width=50).grid(row=3, column=0, padx=10)
+    tk.Label(root, textvariable=status_var, fg="#555").grid(row=4, column=0, sticky="w", padx=10, pady=6)
 
     result = {"token": None, "admin": None}
+
+    def test_token():
+        token = token_var.get().strip()
+        if not token:
+            messagebox.showerror("DexKeeper", "BOT_TOKEN is required.")
+            return
+        try:
+            url = f"https://api.telegram.org/bot{token}/getMe"
+            with urllib.request.urlopen(url, timeout=5) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+            if data.get("ok"):
+                status_var.set("✅ Token verified.")
+            else:
+                status_var.set("❌ Token invalid.")
+        except Exception:
+            status_var.set("❌ Token check failed.")
 
     def on_save():
         token = token_var.get().strip()
@@ -295,8 +418,10 @@ def _prompt_gui() -> Tuple[Optional[str], Optional[str]]:
     def on_close():
         root.destroy()
 
-    btn = tk.Button(root, text="Save", command=on_save)
-    btn.grid(row=4, column=0, pady=10)
+    btn_frame = tk.Frame(root)
+    btn_frame.grid(row=5, column=0, pady=10)
+    tk.Button(btn_frame, text="Test Token", command=test_token).grid(row=0, column=0, padx=6)
+    tk.Button(btn_frame, text="Save & Start", command=on_save).grid(row=0, column=1, padx=6)
     root.protocol("WM_DELETE_WINDOW", on_close)
     root.mainloop()
     return result["token"], result["admin"]
@@ -861,6 +986,7 @@ def main():
     global APP_INSTANCE
     APP_INSTANCE = app
     start_tray(app)
+    start_update_check()
     
     # Admin System
     admin_handler = ConversationHandler(

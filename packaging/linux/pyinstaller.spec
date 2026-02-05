@@ -12,7 +12,10 @@ a = Analysis(
     [str(entry)],
     pathex=[str(root)],
     binaries=[],
-    datas=[(str(root / "assets" / "DexKeeper_Bot_icon.png"), "assets")],
+    datas=[
+        (str(root / "assets" / "DexKeeper_Bot_icon.png"), "assets"),
+        (str(root / "VERSION"), "."),
+    ],
     hiddenimports=["tkinter"],
     hookspath=[],
     hooksconfig={},
