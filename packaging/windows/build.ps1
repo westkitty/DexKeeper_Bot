@@ -21,6 +21,10 @@ $build = Join-Path $root "build\windows"
 
 & $pyinstaller $spec --noconfirm --clean --distpath $dist --workpath $build
 
+if (Test-Path (Join-Path $dist "DexKeeper\\DexKeeper.exe")) {
+  Copy-Item (Join-Path $dist "DexKeeper\\DexKeeper.exe") (Join-Path $dist "DexKeeper.exe") -Force
+}
+
 Write-Host "Build output: $dist\DexKeeper.exe"
 
 if (Get-Command iscc.exe -ErrorAction SilentlyContinue) {

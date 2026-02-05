@@ -45,11 +45,11 @@ APPIMAGETOOL="${APPIMAGETOOL:-}"
 if [ -z "$APPIMAGETOOL" ]; then
   APPIMAGETOOL="$ROOT/build/appimagetool.AppImage"
   if [ ! -f "$APPIMAGETOOL" ]; then
-    curl -L "https://github.com/AppImage/AppImageKit/releases/latest/download/appimagetool-x86_64.AppImage" -o "$APPIMAGETOOL"
+    curl -L --fail "https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage" -o "$APPIMAGETOOL"
     chmod +x "$APPIMAGETOOL"
   fi
 fi
 
-"$APPIMAGETOOL" "$APPDIR" "$DIST/DexKeeper.AppImage"
+APPIMAGE_EXTRACT_AND_RUN=1 "$APPIMAGETOOL" "$APPDIR" "$DIST/DexKeeper.AppImage"
 
 echo "AppImage created: $DIST/DexKeeper.AppImage"
