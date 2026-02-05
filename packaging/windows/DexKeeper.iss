@@ -29,7 +29,7 @@ Name: "{group}\DexKeeper"; Filename: "{app}\{#MyAppExeName}"
 Name: "{group}\Uninstall DexKeeper"; Filename: "{uninstallexe}"
 
 [Registry]
-Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "DexKeeper"; ValueData: "\"{app}\\{#MyAppExeName}\""; Tasks: autostart
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "DexKeeper"; ValueData: """{app}\{#MyAppExeName}"""; Tasks: autostart
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "Launch DexKeeper now"; Flags: nowait postinstall skipifsilent

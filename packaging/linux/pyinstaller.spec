@@ -1,7 +1,9 @@
 # -*- mode: python ; coding: utf-8 -*-
 from pathlib import Path
+import os
 
-root = Path(__file__).resolve().parents[2]
+# PyInstaller does not always define __file__ in spec execution.
+root = Path(os.getcwd()).resolve()
 entry = root / "Sources" / "DexKeeper_Bot" / "dexkeeper_bot.py"
 
 block_cipher = None
