@@ -45,9 +45,20 @@ APPIMAGETOOL="${APPIMAGETOOL:-}"
 if [ -z "$APPIMAGETOOL" ]; then
   APPIMAGETOOL="$ROOT/build/appimagetool.AppImage"
   if [ ! -f "$APPIMAGETOOL" ]; then
-    curl -L --fail "https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage" -o "$APPIMAGETOOL"
+    set +e
+    curl -L --fail "https://github.com/AppImage/AppImageKit/releases/latest/download/appimagetool-x86_64.AppImage" -o "$APPIMAGETOOL"
+    if [ $? -ne 0 ] || [ ! -s "$APPIMAGETOOL" ]; then
+      curl -L --fail "https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage" -o "$APPIMAGETOOL"
+    fi
+    set -e
     chmod +x "$APPIMAGETOOL"
   fi
+fi
+
+if [ "$(head -c 4 "$APPIMAGETOOL" 2>/dev/null)" != $'\x7fELF' ]; then
+  echo "appimagetool download is not a valid ELF binary."
+  head -c 200 "$APPIMAGETOOL" || true
+  exit 1
 fi
 
 APPIMAGE_EXTRACT_AND_RUN=1 "$APPIMAGETOOL" "$APPDIR" "$DIST/DexKeeper.AppImage"
