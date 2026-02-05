@@ -5,6 +5,9 @@
 #ifndef MyAppExeSource
   #define MyAppExeSource "..\\..\\dist\\windows\\DexKeeper.exe"
 #endif
+#ifndef MyAppIcon
+  #define MyAppIcon "..\\..\\assets\\DexKeeper_Bot_icon.ico"
+#endif
 
 [Setup]
 AppId={{4D4F6A52-9B56-49F2-AD4F-9C4A5F8120E7}
@@ -13,7 +16,7 @@ AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
 DefaultDirName={localappdata}\DexKeeper
 DefaultGroupName=DexKeeper
-SetupIconFile=..\..\assets\DexKeeper_Bot_icon.ico
+SetupIconFile={#MyAppIcon}
 OutputDir=..\..\dist\windows
 OutputBaseFilename=DexKeeper-Setup
 Compression=lzma
