@@ -866,6 +866,87 @@ def _unrestricted_permissions() -> ChatPermissions:
     )
 
 
+def _chat_is_group(chat: Any) -> bool:
+    return getattr(chat, "type", None) in ("group", "supergroup")
+
+
+async def _upsert_user(
+    conn: aiosqlite.Connection,
+    user: Any,
+    *,
+    status: Optional[str] = None,
+) -> None:
+    if not user or getattr(user, "id", None) is None:
+        return
+    base_values = (
+        user.id,
+        getattr(user, "username", None),
+        getattr(user, "full_name", None) or getattr(user, "name", None) or "",
+        getattr(user, "language_code", None),
+    )
+    if status is None:
+        await conn.execute(
+            """
+            INSERT INTO users (user_id, username, full_name, language)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET
+                username = excluded.username,
+                full_name = excluded.full_name,
+                language = excluded.language
+            """,
+            base_values,
+        )
+    else:
+        await conn.execute(
+            """
+            INSERT INTO users (user_id, username, full_name, language, status)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET
+                username = excluded.username,
+                full_name = excluded.full_name,
+                language = excluded.language,
+                status = excluded.status
+            """,
+            base_values + (status,),
+        )
+    await conn.commit()
+
+
+async def _remember_managed_chat(
+    context: ContextTypes.DEFAULT_TYPE, chat: Any
+) -> Optional[int]:
+    if not chat or not _chat_is_group(chat):
+        return None
+    chat_id = getattr(chat, "id", None)
+    if chat_id is None:
+        return None
+    bot_data = cast(Dict[str, Any], context.bot_data)
+    if bot_data.get("managed_chat_id") == chat_id:
+        return chat_id
+    bot_data["managed_chat_id"] = chat_id
+    await set_setting(_get_db(context), "managed_chat_id", chat_id)
+    return chat_id
+
+
+async def _resolve_target_chat_id(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> Optional[int]:
+    chat = update.effective_chat
+    if chat and _chat_is_group(chat):
+        return await _remember_managed_chat(context, chat)
+
+    bot_data = cast(Dict[str, Any], context.bot_data)
+    cached_chat_id = bot_data.get("managed_chat_id")
+    if isinstance(cached_chat_id, int):
+        return cached_chat_id
+
+    stored_chat_id = await get_setting(_get_db(context), "managed_chat_id")
+    if isinstance(stored_chat_id, int):
+        bot_data["managed_chat_id"] = stored_chat_id
+        return stored_chat_id
+    return None
+
+
 # === PAUSE HANDLER ===
 
 
@@ -1125,8 +1206,25 @@ async def handle_zoom_message(update: Update, context: ContextTypes.DEFAULT_TYPE
 @admin_only
 async def admin_panel_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Entry Point for Admin Dashboard"""
+    if update.effective_user:
+        await _upsert_user(_get_db(context), update.effective_user, status="active")
     await show_admin_menu(update, context, "root")
     return MENU
+
+
+async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user:
+        await _upsert_user(_get_db(context), update.effective_user, status="active")
+    if not update.effective_message:
+        return
+
+    if await _is_admin(update, context):
+        text = "DexKeeper is online. Use /admin here to manage the connected group."
+    else:
+        text = (
+            "DexKeeper is online. Keep this DM started if an admin wants to send you announcements."
+        )
+    await update.effective_message.reply_text(text)
 
 
 async def show_admin_menu(
@@ -1410,11 +1508,9 @@ async def handle_broadcast_input(update: Update, context: ContextTypes.DEFAULT_T
         LAST_BROADCAST[admin_id] = now
     message = update.message.text
     conn = _get_db(context)
+    await _upsert_user(conn, update.effective_user, status="active")
 
-    # Get all pending users (and approved ones if we tracked them better, but pending is what we have in DB schema provided)
-    # Using `users` table if available or pending
-    # NOTE: Schema above has `users` table. Let's use that.
-    async with conn.execute("SELECT user_id FROM users") as cursor:
+    async with conn.execute("SELECT user_id FROM users ORDER BY joined_at ASC") as cursor:
         users = list(await cursor.fetchall())
 
     sent = 0
@@ -1479,21 +1575,6 @@ async def export_data_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     return MENU
 
 
-# Pass-through handlers for other inputs (Logic similar to V8)
-async def handle_id_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message:
-        return MENU
-    await update.message.reply_text(
-        "✅ Action Complete (Simulated)"
-    )  # Full logic skipped for brevity, merging complete flow
-    await show_admin_menu(update, context, "users")
-    return MENU
-
-
-# NOTE: In full file I would include all the specific validation logic from V8 here.
-# For this output, I will include the actual implementation to pass the Strict Audit.
-
-
 async def handle_id_action_real(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await _require_admin(update, context):
         return ConversationHandler.END
@@ -1502,11 +1583,6 @@ async def handle_id_action_real(update: Update, context: ContextTypes.DEFAULT_TY
             await update.effective_message.reply_text("❌ Invalid input")
             await show_admin_menu(update, context, "users")
         return MENU
-    chat = update.effective_chat
-    if not chat:
-        await update.message.reply_text("❌ Chat not available.")
-        return MENU
-
     uid_str = update.message.text.strip()
     try:
         user_id = int(uid_str)
@@ -1518,8 +1594,19 @@ async def handle_id_action_real(update: Update, context: ContextTypes.DEFAULT_TY
         return MENU
 
     conn = _get_db(context)
+    await _upsert_user(conn, update.effective_user, status="active")
     user_data = cast(Dict[str, Any], context.user_data)
     action = user_data.get("action_type", "ban")
+    target_chat_id = None
+
+    if action in {"ban", "unban"}:
+        target_chat_id = await _resolve_target_chat_id(update, context)
+        if target_chat_id is None:
+            await update.message.reply_text(
+                "❌ No managed group is known yet. Add the bot to a group first, then send a message there before using this action from DM."
+            )
+            await show_admin_menu(update, context, "users")
+            return MENU
 
     try:
         if action == "ban":
@@ -1539,7 +1626,7 @@ async def handle_id_action_real(update: Update, context: ContextTypes.DEFAULT_TY
                 # Kick happens after DB commit succeeds
                 api_success = True
                 try:
-                    await context.bot.ban_chat_member(chat.id, user_id)
+                    await context.bot.ban_chat_member(target_chat_id, user_id)
                 except TelegramError as e:
                     api_success = False
                     logger.warning(f"Ban API call failed (user blacklisted in DB): {e}")
@@ -1565,14 +1652,43 @@ async def handle_id_action_real(update: Update, context: ContextTypes.DEFAULT_TY
                         ("blacklist", json.dumps(bl)),
                     )
                 await conn.commit()
+                await context.bot.unban_chat_member(
+                    target_chat_id, user_id, only_if_banned=True
+                )
                 await update.message.reply_text(f"✅ Unbanned {user_id}")
             except Exception:
                 await conn.rollback()
                 raise
 
         elif action == "view":
-            # Fetch info
-            text = f"👤 User {user_id}\n(Details fetched from DB...)"
+            async with conn.execute(
+                """
+                SELECT user_id, username, full_name, language, joined_at, status
+                FROM users
+                WHERE user_id = ?
+                """,
+                (user_id,),
+            ) as cursor:
+                row = await cursor.fetchone()
+
+            admins = await get_setting(conn, "admins", [])
+            blacklist = await get_setting(conn, "blacklist", [])
+            if row:
+                text = (
+                    f"👤 User {row['user_id']}\n"
+                    f"Username: @{row['username'] or 'unknown'}\n"
+                    f"Name: {row['full_name'] or 'unknown'}\n"
+                    f"Language: {row['language'] or 'unknown'}\n"
+                    f"Joined: {row['joined_at']}\n"
+                    f"Status: {row['status']}\n"
+                    f"Admin: {'yes' if user_id in admins else 'no'}\n"
+                    f"Blacklisted: {'yes' if user_id in blacklist else 'no'}"
+                )
+            else:
+                text = (
+                    f"👤 User {user_id}\n"
+                    "No stored profile yet. The user has not been seen in a tracked join or DM."
+                )
             await update.message.reply_text(text)
     except Exception as e:
         logger.error(f"Action '{action}' failed for user {user_id}: {e}")
@@ -1609,9 +1725,6 @@ async def handle_poll_options(update: Update, context: ContextTypes.DEFAULT_TYPE
         if update.effective_message:
             await update.effective_message.reply_text("❌ Invalid options.")
         return INPUT_POLL_OPTIONS
-    chat = update.effective_chat
-    if not chat:
-        return MENU
     user_data = cast(Dict[str, Any], context.user_data)
     question = user_data.get("poll_q")
     if not question:
@@ -1624,8 +1737,14 @@ async def handle_poll_options(update: Update, context: ContextTypes.DEFAULT_TYPE
     if len(options) > 10:
         await update.message.reply_text("❌ Max 10 options. Please shorten.")
         return INPUT_POLL_OPTIONS
+    target_chat_id = await _resolve_target_chat_id(update, context)
+    if target_chat_id is None:
+        await update.message.reply_text(
+            "❌ No managed group is known yet. Add the bot to a group first, then send a message there before creating polls from DM."
+        )
+        return MENU
     await context.bot.send_poll(
-        chat_id=chat.id,
+        chat_id=target_chat_id,
         question=question,
         options=options,
     )
@@ -1681,22 +1800,25 @@ async def handle_schedule_text(update: Update, context: ContextTypes.DEFAULT_TYP
         if update.effective_message:
             await update.effective_message.reply_text("❌ Invalid message.")
         return INPUT_SCHEDULE_TEXT
-    chat = update.effective_chat
-    if not chat:
-        return MENU
     user_data = cast(Dict[str, Any], context.user_data)
     mins = user_data.get("sched_mins")
     if not isinstance(mins, int):
         await update.message.reply_text("❌ Schedule time missing. Send minutes first.")
         return INPUT_SCHEDULE_TIME
     text = update.message.text
+    target_chat_id = await _resolve_target_chat_id(update, context)
+    if target_chat_id is None:
+        await update.message.reply_text(
+            "❌ No managed group is known yet. Add the bot to a group first, then send a message there before scheduling posts from DM."
+        )
+        return MENU
     # Job Queue Logic
     job_queue = context.job_queue
     if job_queue:
         job_queue.run_once(
             _send_scheduled_message,
             mins * 60,
-            data={"cid": chat.id, "text": text},
+            data={"cid": target_chat_id, "text": text},
             name=str(uuid.uuid4()),
         )
         await update.message.reply_text(f"✅ Scheduled in {mins}m")
@@ -1706,13 +1828,6 @@ async def handle_schedule_text(update: Update, context: ContextTypes.DEFAULT_TYP
     await show_admin_menu(update, context, "engage")
     return MENU
 
-
-# ... (Implement other handlers identically to previous logic) ...
-# For brevity in this massive write, I am ensuring the structure is exactly right.
-# I will define placeholders that would functionally work for the remaining specific inputs
-# but keep the structure valid.
-
-
 async def handle_topic_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await _require_admin(update, context):
         return ConversationHandler.END
@@ -1720,12 +1835,15 @@ async def handle_topic_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if update.effective_message:
             await update.effective_message.reply_text("❌ Invalid topic name.")
         return MENU
-    chat = update.effective_chat
-    if not chat:
+    target_chat_id = await _resolve_target_chat_id(update, context)
+    if target_chat_id is None:
+        await update.message.reply_text(
+            "❌ No managed group is known yet. Add the bot to a forum-enabled group first, then send a message there before creating topics from DM."
+        )
         return MENU
     try:
         topic = await context.bot.create_forum_topic(
-            chat_id=chat.id, name=update.message.text
+            chat_id=target_chat_id, name=update.message.text
         )
         await update.message.reply_text(f"✅ Topic Created: {topic.name}")
     except Exception as e:
@@ -1828,6 +1946,7 @@ async def global_middleware(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
     if not chat:
         return
+    await _remember_managed_chat(context, chat)
 
     # I18n
     user_data = cast(Dict[str, Any], context.user_data)
@@ -1875,10 +1994,27 @@ async def on_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
     if not chat:
         return
+    await _remember_managed_chat(context, chat)
+    conn = _get_db(context)
     for member in update.message.new_chat_members:
         if member.id == context.bot.id:
             continue
-        conn = _get_db(context)
+        await _upsert_user(conn, member, status="pending")
+        if await get_setting(conn, "lockdown_mode", False):
+            try:
+                await context.bot.ban_chat_member(chat.id, member.id)
+                await context.bot.unban_chat_member(
+                    chat.id, member.id, only_if_banned=True
+                )
+            except TelegramError as e:
+                logger.warning(f"Failed to reject new member {member.id}: {e}")
+                await context.bot.restrict_chat_member(
+                    chat.id,
+                    member.id,
+                    ChatPermissions(can_send_messages=False),
+                )
+            await update.message.reply_text(i18n.get("lockdown"))
+            continue
         if await get_setting(conn, "captcha_enabled", True):
             await context.bot.restrict_chat_member(
                 chat.id,
@@ -1937,6 +2073,7 @@ async def verify_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg = query.message
         if msg:
             await cast(Message, msg).delete()
+        await _upsert_user(_get_db(context), user, status="active")
         tmpl = await get_setting(_get_db(context), "welcome_message", "Welcome!")
         await context.bot.send_message(chat.id, tmpl)
         await query.answer("Verified!", show_alert=False)
@@ -1970,6 +2107,9 @@ async def post_init(app):
     # Defaults
     if await get_setting(conn, "welcome_message") is None:
         await set_setting(conn, "welcome_message", "Welcome! Please read the rules.")
+    managed_chat_id = await get_setting(conn, "managed_chat_id")
+    if isinstance(managed_chat_id, int):
+        app.bot_data["managed_chat_id"] = managed_chat_id
 
     # Background jobs
     app.job_queue.run_repeating(_heartbeat_job, interval=60, first=5)
@@ -2029,6 +2169,7 @@ def main():
 
     # Admin System
     app.add_handler(TypeHandler(Update, paused_handler), group=0)
+    app.add_handler(CommandHandler("start", start_cmd))
     admin_handler = ConversationHandler(
         entry_points=[CommandHandler("admin", admin_panel_cmd)],
         states={

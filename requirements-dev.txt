@@ -1,1 +1,3 @@
 pip-audit
+pytest
+pytest-asyncio

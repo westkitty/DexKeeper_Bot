@@ -20,7 +20,7 @@
 
 # DexKeeper_Bot
 
-**DexKeeper** is a high-performance, privacy-focused telegram bot designed to manage communities with minimal friction. It combines automated moderation, engagement tools, and security features into a single containerized application that you own 100%.
+**DexKeeper** is a self-hosted Telegram bot for single-community moderation and admin workflows. It runs as a polling bot, stores state locally in SQLite, and includes optional desktop tray controls for packaged installs.
 
 Unlike cloud bots, **you host this yourself**. Your data, your rules, your hardware.
 
@@ -29,30 +29,33 @@ Unlike cloud bots, **you host this yourself**. Your data, your rules, your hardw
 ## 🌟 Features
 
 ### 🛡️ Security & Moderation
-- **"I Am Human" Captcha**: Automatically restricts new members until they verify they are human, stopping bot spam instantly.
-- **Lockdown Mode**: Instantly reject all new join requests during raid attacks.
-- **Bad Word Filter**: define a custom list of prohibited words; messages containing them are auto-deleted.
-- **Flood Gate**: Auto-mutes users who spam messages too quickly (5 messages in < 2 seconds).
+- **Human verification**: Restricts new members until they press the verification button.
+- **Lockdown mode**: Immediately rejects newly joined members while lockdown is enabled.
+- **Bad word filter**: Deletes group messages containing configured blocked strings.
+- **Flood gate**: Restricts users who post more than 5 messages inside 2 seconds.
 
 ### 📢 Engagement Tools
 - **Welcome Messages**: Customizable greeting for verified members.
-- **Polls**: Create and post native Telegram polls directly from the admin panel.
-- **Broadcast**: Send a message to all users who have DM'd the bot (great for announcements).
-- **Scheduled Messages**: Set a message to be sent to a group after X minutes.
-- **Forum Topics**: Create new topics in forum-enabled groups.
+- **Polls**: Create native Telegram polls from the admin panel and post them to the managed group.
+- **Broadcast**: Send a direct message to every user recorded in the local user database.
+- **Scheduled Messages**: Queue a message for the managed group after a delay in minutes.
+- **Forum Topics**: Create topics in a forum-enabled supergroup.
 
 ### 🎥 Utilities
-- **Zoom Enforcer**: Detects raw Zoom links and converts them into beautiful, clickable cards (Professional, Mascot, or Minimal styles). prevents messy link clutter.
-- **User Management**: View, Ban, Unban, and Promote users from a GUI.
-- **CSV Export**: Download a full list of your user database as a CSV file.
+- **Zoom Enforcer**: Detects raw Zoom links and reposts them in a formatted card style.
+- **User Management**: View, ban, unban, and promote users from the admin panel.
+- **CSV Export**: Export the local SQLite-backed user database as CSV.
 
 ---
 
 ## 📋 Prerequisites
 
-Before you start, you need two things:
-1.  **A Computer**: Any PC (Windows, Mac, or Linux) that can run Docker.
-2.  **A Telegram Account**: To create the bot and be its admin.
+Before you start, you need:
+1. **A Telegram bot token** from [@BotFather](https://t.me/BotFather)
+2. **A Telegram account** to act as admin
+3. **One runtime path**
+   - Docker / OrbStack / Docker Desktop, or
+   - Python 3.11+ for a direct source run
 
 ---
 
@@ -194,7 +197,7 @@ If you prefer to run Python directly:
 
 1.  **Find your bot**: Search for your bot's username in Telegram.
 2.  **Start it**: Click **Start** in the DM.
-    *   *Note: Since you are the owner, this registers you as Admin.*
+    *   This records your DM in DexKeeper's local user database.
 3.  **Add to Group**:
     *   Go to your Group Info -> **Add Members**.
     *   Search for your bot and add it.
@@ -203,12 +206,19 @@ If you prefer to run Python directly:
     *   Select your bot.
     *   **CRITICAL**: Give it all permissions (Delete Messages, Ban Users, Invite Users, Pin Messages).
     *   Save.
+5.  **Set your admin identity**:
+    *   Put your numeric Telegram user ID in `ADMIN_ID`, or
+    *   Promote yourself later from the admin panel using an existing admin.
+6.  **Let DexKeeper learn the managed group**:
+    *   After the bot is in the group, make sure it sees at least one group event.
+    *   A normal message or a new-member event is enough.
+    *   DexKeeper stores the most recently seen group as the managed target for poll, schedule, topic, ban, and unban actions launched from DM.
 
 ---
 
 ## 🎮 Phase 4: How to Use
 
-Everything is controlled via the **Admin Panel**.
+Everything is controlled through the **Admin Panel** in the bot DM.
 
 1.  Go to the **Direct Message (DM)** with your bot.
 2.  Type `/admin`.
@@ -220,22 +230,46 @@ Everything is controlled via the **Admin Panel**.
 
 **Example: Creating a Poll**
 1.  Click **📢 Engagement**, then **📊 Create Poll**.
-2.  The bot will ask for the Question. Type it in chat.
+2.  The bot will ask for the question. Type it in the DM.
 3.  The bot will ask for Options (comma separated). Type: `Yes, No, Maybe`.
-4.  Done! The poll posts to the group.
+4.  DexKeeper posts the poll to the currently managed group.
+
+## Runtime Notes
+
+- Startup mode is **polling only**. There is no webhook mode in the current codebase.
+- DexKeeper stores runtime data in a local SQLite database plus a local `.env` inside the DexKeeper data directory.
+- The bot assumes **one managed group at a time**. Group-targeted admin actions use the most recently seen group or supergroup.
+- The local user database is populated when:
+  - a user starts the bot in DM,
+  - an admin opens `/admin`,
+  - a member joins the managed group,
+  - a member completes verification.
+- Runtime settings live in SQLite and per-user runtime files under the DexKeeper data directory.
 
 ---
 
 ## Developer Checks
+
+Create a virtual environment and install runtime plus developer dependencies:
+```bash
+python3 -m venv .venv
+. .venv/bin/activate
+python3 -m pip install --upgrade pip
+python3 -m pip install -r requirements.txt -r requirements-dev.txt
+```
 
 Run tests:
 ```bash
 python3 -m pytest -q
 ```
 
+Run a syntax smoke check:
+```bash
+python3 -m py_compile Sources/DexKeeper_Bot/dexkeeper_bot.py Sources/DexKeeper_Bot/healthcheck.py
+```
+
 Run dependency security scan:
 ```bash
-python3 -m pip install --user -r requirements-dev.txt
 python3 -m pip_audit -r requirements.txt
 ```
 

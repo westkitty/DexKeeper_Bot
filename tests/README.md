@@ -3,21 +3,28 @@
 ## Running Tests
 
 ```bash
-# Install test dependencies
-pip install pytest pytest-asyncio
+# Create a virtual environment from the repo root
+python3 -m venv .venv
+. .venv/bin/activate
+
+# Install runtime + developer dependencies
+python3 -m pip install --upgrade pip
+python3 -m pip install -r requirements.txt -r requirements-dev.txt
 
 # Run all tests
-pytest tests/ -v
+python3 -m pytest tests/ -v
 
-# Run specific test file
-pytest tests/test_helpers.py -v
+# Run a specific test file
+python3 -m pytest tests/test_helpers.py -v
 ```
 
 ## Test Coverage
 
-- `test_helpers.py`: Unit tests for pure utility functions
-- Additional integration tests can be added as needed
+- `test_helpers.py`: Utility helper coverage
+- `test_bug_fixes.py`: Regression coverage for audited runtime bugs
+- `test_conversation_flows.py`: Conversation state and input-flow coverage
+- `test_telegram_simulation.py`: Telegram interaction simulation coverage
 
 ## Notes
 
-These tests validate the bug fixes from the comprehensive bug sweep conducted in February 2026.
+These tests validate the current audited runtime behavior. They do not replace live Telegram validation for permissions, delivery, or forum configuration.

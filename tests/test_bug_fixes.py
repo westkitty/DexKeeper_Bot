@@ -27,6 +27,9 @@ from dexkeeper_bot import (
     _is_admin,
     ZoomStyles,
     SCHEMA,
+    on_new_member,
+    handle_id_action_real,
+    start_cmd,
     set_setting,
 )
 
@@ -36,10 +39,39 @@ class DummyApp:
         self.db_conn = db_conn
 
 
+class DummyBot:
+    def __init__(self):
+        self.id = 999999
+        self.banned_users = []
+        self.unbanned_users = []
+
+    async def ban_chat_member(self, chat_id, user_id, **kwargs):
+        self.banned_users.append({"chat_id": chat_id, "user_id": user_id, **kwargs})
+
+    async def unban_chat_member(self, chat_id, user_id, **kwargs):
+        self.unbanned_users.append(
+            {"chat_id": chat_id, "user_id": user_id, **kwargs}
+        )
+
+    async def restrict_chat_member(self, *args, **kwargs):
+        return None
+
+
 class DummyContext:
     def __init__(self, db_conn):
         self.application = DummyApp(db_conn)
+        self.bot = DummyBot()
         self.user_data = {}
+        self.bot_data = {}
+        self.job_queue = Mock()
+
+
+def build_message(text: str = "hello"):
+    message = Mock()
+    message.text = text
+    message.reply_text = AsyncMock()
+    message.delete = AsyncMock()
+    return message
 
 
 class TestDatabaseTransactionSafety:
@@ -299,6 +331,110 @@ class TestAdminAuthorization:
         context.application = Mock()
         asyncio.run(admin_selection_handler(update_mock, context))
         assert context.user_data["action_type"] == "ban"
+
+
+class TestRuntimeFixes:
+    """Regression tests for audited runtime bugs."""
+
+    def test_lockdown_mode_is_enforced_for_new_members(self, monkeypatch):
+        async def run_test():
+            conn = await aiosqlite.connect(":memory:")
+            conn.row_factory = aiosqlite.Row
+            await conn.executescript(SCHEMA)
+            await set_setting(conn, "lockdown_mode", True)
+
+            context = DummyContext(conn)
+            member = Mock(
+                id=123,
+                username="raider",
+                full_name="Raid User",
+                language_code="en",
+                name="Raid User",
+            )
+            update_mock = Mock()
+            update_mock.effective_chat = Mock(id=-100777, type="supergroup")
+            update_mock.message = build_message()
+            update_mock.message.new_chat_members = [member]
+
+            await on_new_member(update_mock, context)
+
+            async with conn.execute(
+                "SELECT status FROM users WHERE user_id = ?", (123,)
+            ) as cursor:
+                row = await cursor.fetchone()
+
+            await conn.close()
+            return context, row
+
+        context, row = asyncio.run(run_test())
+        assert row["status"] == "pending"
+        assert context.bot.banned_users[0]["chat_id"] == -100777
+        assert context.bot.unbanned_users[0]["chat_id"] == -100777
+
+    def test_unban_uses_managed_group_from_dm(self, monkeypatch):
+        async def run_test():
+            conn = await aiosqlite.connect(":memory:")
+            conn.row_factory = aiosqlite.Row
+            await conn.executescript(SCHEMA)
+            await set_setting(conn, "blacklist", [55])
+
+            context = DummyContext(conn)
+            context.bot_data["managed_chat_id"] = -100555
+            context.user_data["action_type"] = "unban"
+
+            update_mock = Mock()
+            update_mock.effective_user = Mock(
+                id=1,
+                username="admin",
+                full_name="Admin",
+                language_code="en",
+            )
+            update_mock.effective_chat = Mock(id=1, type="private")
+            update_mock.callback_query = None
+            update_mock.message = build_message("55")
+            update_mock.effective_message = update_mock.message
+
+            await handle_id_action_real(update_mock, context)
+            await conn.close()
+            return context
+
+        monkeypatch.setattr("dexkeeper_bot.ADMIN_ID", 1)
+        context = asyncio.run(run_test())
+        assert context.bot.unbanned_users[0]["chat_id"] == -100555
+        assert context.bot.unbanned_users[0]["user_id"] == 55
+
+    def test_start_command_records_dm_user(self, monkeypatch):
+        async def run_test():
+            conn = await aiosqlite.connect(":memory:")
+            conn.row_factory = aiosqlite.Row
+            await conn.executescript(SCHEMA)
+
+            context = DummyContext(conn)
+            update_mock = Mock()
+            update_mock.effective_user = Mock(
+                id=77,
+                username="member",
+                full_name="Member User",
+                language_code="en",
+            )
+            update_mock.effective_chat = Mock(id=77, type="private")
+            update_mock.effective_message = build_message("/start")
+
+            await start_cmd(update_mock, context)
+
+            async with conn.execute(
+                "SELECT username, status FROM users WHERE user_id = ?", (77,)
+            ) as cursor:
+                row = await cursor.fetchone()
+
+            await conn.close()
+            return row, update_mock
+
+        monkeypatch.setattr("dexkeeper_bot.ADMIN_ID", 0)
+        row, update_mock = asyncio.run(run_test())
+        assert row["username"] == "member"
+        assert row["status"] == "active"
+        update_mock.effective_message.reply_text.assert_called_once()
 
 
 class TestRegressionPrevention:
