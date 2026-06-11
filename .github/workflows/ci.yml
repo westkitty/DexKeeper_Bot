@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: Test, lint, and audit
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt -r requirements-dev.txt
+          python -m pip install ruff
+
+      - name: Syntax check
+        run: |
+          python -m py_compile Sources/DexKeeper_Bot/dexkeeper_bot.py Sources/DexKeeper_Bot/healthcheck.py
+
+      - name: Run tests
+        run: |
+          python -m pytest -q
+
+      - name: Fatal lint check
+        run: |
+          python -m ruff check --select E9,F63,F7,F82 .
+
+      - name: Audit runtime dependencies
+        run: |
+          python -m pip_audit -r requirements.txt
+
+      - name: Audit developer dependencies
+        run: |
+          python -m pip_audit -r requirements-dev.txt

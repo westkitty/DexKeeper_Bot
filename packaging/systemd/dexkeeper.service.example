@@ -1,0 +1,20 @@
+[Unit]
+Description=DexKeeper Telegram moderation bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=dexkeeper
+Group=dexkeeper
+WorkingDirectory=/opt/DexKeeper_Bot
+ExecStart=/opt/DexKeeper_Bot/.venv/bin/python /opt/DexKeeper_Bot/Sources/DexKeeper_Bot/dexkeeper_bot.py
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+
+[Install]
+WantedBy=multi-user.target
